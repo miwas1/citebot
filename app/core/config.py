@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     )
     embedding_dimension: int = Field(default=32, alias="EMBEDDING_DIMENSION")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    gemini_embedding_model: str = Field(
+        default="gemini-embedding-2",
+        alias="GEMINI_EMBEDDING_MODEL",
+    )
     chunk_size: int = Field(default=800, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=120, alias="CHUNK_OVERLAP")
 
@@ -52,6 +57,13 @@ class Settings(BaseSettings):
             and not self.openai_api_key
         ):
             msg = "OPENAI_API_KEY is required when APP_ENV=production and EMBEDDING_PROVIDER=openai"
+            raise ValueError(msg)
+        if (
+            self.app_env == "production"
+            and self.embedding_provider == "gemini"
+            and not self.gemini_api_key
+        ):
+            msg = "GEMINI_API_KEY is required when APP_ENV=production and EMBEDDING_PROVIDER=gemini"
             raise ValueError(msg)
         if self.chunk_overlap >= self.chunk_size:
             msg = "CHUNK_OVERLAP must be smaller than CHUNK_SIZE"

@@ -163,3 +163,4 @@ class IngestionService:
         """Return aggregate ingestion counts for observability and dashboards."""
 
         return await self._repository.metrics()
+        return await self._repository.metrics()

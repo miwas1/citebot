@@ -1,4 +1,4 @@
-"""Embedding backends for local development and OpenAI-backed indexing."""
+"""Embedding backends for local development, OpenAI, and Gemini indexing."""
 
 from __future__ import annotations
 
@@ -70,6 +70,41 @@ class OpenAIEmbedder(BaseEmbedder):
         return [item["embedding"] for item in payload["data"]]
 
 
+class GeminiEmbedder(BaseEmbedder):
+    """Call the Gemini embeddings API for text batches."""
+
+    def __init__(self, api_key: str, model_name: str) -> None:
+        """Store the Gemini credentials and embedding model name."""
+
+        self._api_key = api_key
+        self._model_name = model_name
+
+    async def embed_texts(self, texts: Sequence[str]) -> list[list[float]]:
+        """Request embeddings from Gemini for the provided input texts."""
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            embeddings: list[list[float]] = []
+            for text in texts:
+                response = await client.post(
+                    (
+                        "https://generativelanguage.googleapis.com/v1beta/"
+                        f"models/{self._model_name}:embedContent"
+                    ),
+                    headers={
+                        "x-goog-api-key": self._api_key,
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": f"models/{self._model_name}",
+                        "content": {"parts": [{"text": text}]},
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                embeddings.append(payload["embeddings"][0]["value"])
+        return embeddings
+
+
 def build_embedder(settings: Settings) -> BaseEmbedder:
     """Build the configured embedding backend for the current environment."""
 
@@ -78,4 +113,12 @@ def build_embedder(settings: Settings) -> BaseEmbedder:
             msg = "OPENAI_API_KEY is required when EMBEDDING_PROVIDER=openai"
             raise ValueError(msg)
         return OpenAIEmbedder(settings.openai_api_key, settings.embedding_model)
+    if settings.embedding_provider == "gemini":
+        if not settings.gemini_api_key:
+            msg = "GEMINI_API_KEY is required when EMBEDDING_PROVIDER=gemini"
+            raise ValueError(msg)
+        return GeminiEmbedder(
+            api_key=settings.gemini_api_key,
+            model_name=settings.gemini_embedding_model,
+        )
     return MockEmbedder(settings.embedding_dimension)

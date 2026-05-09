@@ -27,6 +27,10 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
+Set `EMBEDDING_PROVIDER` in `.env` to `mock`, `openai`, or `gemini`.
+Use `OPENAI_API_KEY` with `EMBEDDING_MODEL` for OpenAI, or `GEMINI_API_KEY`
+with `GEMINI_EMBEDDING_MODEL` for Gemini.
+
 ## Ingest a Sample Corpus
 
 ```bash

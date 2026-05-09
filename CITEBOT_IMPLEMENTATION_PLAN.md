@@ -8,10 +8,10 @@ Build a production-ready agentic RAG research assistant that can ingest and retr
 
 - End-to-end RAG pipeline orchestrated with LangGraph and LangChain retrieval chains.
 - Dual vector-store support using PostgreSQL with pgvector and Qdrant.
-- Hybrid retrieval combining dense OpenAI embeddings, sparse BM25, and cross-encoder re-ranking.
+- Hybrid retrieval combining dense OpenAI or Gemini embeddings, sparse BM25, and cross-encoder re-ranking.
 - Query latency target of sub-200 ms for retrieval-stage responses under realistic cached/indexed conditions.
 - Agentic tools for Tavily web search, Python sandbox execution, and citation verification.
-- Automated RAGAS evaluation loop with quality thresholds and re-indexing triggers.
+- Trackable continuous evaluation loop using RAGAS metrics, pytest CI gates, Phoenix/OpenInference traces, quality thresholds, and re-indexing triggers.
 - Dynamic context-window compression that reduces token usage while preserving citation traceability.
 - Production deployment on FastAPI, Docker, AWS ECS, RDS PostgreSQL, Qdrant, and managed observability.
 
@@ -23,6 +23,36 @@ Build a production-ready agentic RAG research assistant that can ingest and retr
 - Prefer deterministic quality gates before adding agent autonomy.
 - Design for backfills, re-indexing, partial failures, and corpus growth from day one.
 - Do not expose code execution or web tools without policy, resource, timeout, and audit controls.
+
+## Documentation Currency Policy
+
+- Every implementation change must be validated against the latest stable official documentation for each library, framework, SDK, API, and infrastructure component it touches.
+- When a project dependency is version-pinned, implementation must follow the latest official docs compatible with that pinned version.
+- Before starting any new phase, refresh documentation for all directly used integrations in that phase instead of relying on prior assumptions.
+- If official docs and existing code diverge, update the code or dependency pin intentionally and record the decision in repository docs or ADRs.
+- Prefer official documentation sources over blog posts, community snippets, or stale examples.
+- Every OpenAI-backed capability must define a Gemini-backed equivalent when Gemini supports the same capability at implementation time.
+- Interchangeable model vendors must be selected through explicit `.env` feature flags rather than hard-coded provider choices.
+
+## Current Implementation Status
+
+Status as of 2026-05-09, based on the repository contents and passing local tests.
+
+| Phase | Status | Notes |
+| --- | --- | --- |
+| Phase 0 - Product, Risk, and Architecture Definition | Partially implemented | Architecture documents exist in `docs/architecture`, but ADRs and full stakeholder sign-off artifacts are not yet present. |
+| Phase 1 - Repository, Runtime, and Development Foundation | Implemented | FastAPI bootstrap, typed config, Docker Compose, health/readiness/version endpoints, lint/test commands, and local run documentation are present. |
+| Phase 2 - Document Ingestion and Corpus Management | Implemented | Ingestion CLI/admin API, document and chunk schema, normalization, chunking, mock/OpenAI/Gemini embedding path, object storage, metadata persistence, pgvector/Qdrant writers, sparse index, job tracking, and ingestion tests are present. |
+| Phase 3 - Dense Retrieval with pgvector and Qdrant | Not implemented | Index write paths exist, but retrieval interface, dense search service, fallback routing, and benchmark harness are not yet implemented. |
+| Phase 4 - Hybrid Search and Cross-Encoder Re-ranking | Not implemented | No hybrid fusion or re-ranker implementation yet. |
+| Phase 5 - LangGraph Agent Orchestration | Not implemented | No LangGraph state machine or node graph yet. |
+| Phase 6 - Agentic Tools | Not implemented | No production Tavily, sandbox, or citation verifier integration yet. |
+| Phase 7 - Answer Generation, Citations, and Context Compression | Not implemented | No answer synthesis or citation-grounded generation path yet. |
+| Phase 8 - Automated Evaluation and Quality Monitoring | Not implemented | No RAGAS, Phoenix/OpenInference, CI gate, or scheduled evaluation workflow yet. |
+| Phase 9 - API, UX Contracts, and External Integration | Partially implemented | Basic admin ingestion and health endpoints exist, but conversation, streaming, auth, and external contracts are not implemented. |
+| Phase 10 - Observability, Reliability, and Security Hardening | Partially implemented | Basic readiness checks exist, but structured observability, alerting, tracing, and hardening controls are not implemented. |
+| Phase 11 - Deployment and Infrastructure | Partially implemented | Dockerfile and Docker Compose exist for local development, but AWS infrastructure and deployment automation are not implemented. |
+| Phase 12 - Performance, Scale, and Launch Readiness | Not implemented | No benchmark suite, launch checklist, or load-test artifacts yet. |
 
 ## Proposed System Architecture
 
@@ -43,7 +73,9 @@ Client
           -> Tavily Web Search
           -> Python Sandbox
     -> Evaluation Service
-      -> RAGAS Metrics
+      -> RAGAS Metric Runner
+      -> Golden Dataset and Experiment Store
+      -> Phoenix/OpenInference Trace Export
       -> Quality Threshold Monitor
       -> Re-index Trigger
 
@@ -136,6 +168,7 @@ Infrastructure
   - `tests`
 - Add FastAPI application bootstrap.
 - Add typed configuration using environment variables and secrets.
+- Add `.env` feature flags for interchangeable model providers where multiple vendors support the same capability.
 - Add local Docker Compose services:
   - PostgreSQL with pgvector.
   - Qdrant.
@@ -158,6 +191,7 @@ Infrastructure
 - Health checks validate database and vector-store connectivity.
 - Unit test framework is running in CI.
 - Configuration fails fast when required production values are missing.
+- Supported model vendors for the same implemented capability can be switched through `.env` without code changes.
 
 ## Phase 2 - Document Ingestion and Corpus Management
 
@@ -191,6 +225,7 @@ Infrastructure
 - Implement normalization and deduplication.
 - Implement chunking strategy with overlap tuned for citation precision.
 - Implement embedding workers with batching, retry, idempotency, and rate-limit handling.
+- Implement OpenAI and Gemini embedding providers behind the same feature-flagged interface when both vendors support embeddings.
 - Store raw documents or extracted text in durable object storage.
 - Store metadata in PostgreSQL.
 - Write embeddings to pgvector and Qdrant.
@@ -215,6 +250,7 @@ Infrastructure
 - Every indexed chunk can be traced back to a source document and location.
 - Embedding version changes can trigger selective re-indexing.
 - A sample corpus can be fully ingested locally and queried.
+- The active embedding vendor can be switched through `.env` without code changes.
 
 ## Phase 3 - Dense Retrieval with pgvector and Qdrant
 
@@ -477,52 +513,137 @@ Infrastructure
 
 - Continuously measure retrieval and generation quality.
 - Trigger investigation or re-indexing when quality degrades.
+- Make every evaluation run traceable to a dataset version, corpus/index version, application version, prompt version, model vendor/model version, and run artifact bundle.
+
+### Tooling Decision
+
+Use a layered, low-lock-in evaluation system:
+
+- **RAGAS** is the primary metric library for RAG quality because its current docs include RAG metrics for context precision, context recall, response relevancy, faithfulness, noise sensitivity, and related agent metrics. It also documents pytest CI usage with `evaluate(..., in_ci=True)`, matching this repo's existing pytest foundation.
+- **Phoenix with OpenInference/OpenTelemetry** is the trace and experiment backend because Phoenix is open source, built on OpenTelemetry/OpenInference, captures model, retrieval, tool, and custom-logic traces, and supports scoring traces/spans plus datasets and experiments.
+- **Custom deterministic retrieval/citation checks** remain first-class because citation traceability is a product invariant and should not depend only on LLM-as-judge scores.
+- **DeepEval and LangSmith are not selected as the default stack for Phase 8**. DeepEval has strong pytest-style RAG eval support, and LangSmith is a strong hosted option for LangChain/LangGraph workflows, but the default project fit is RAGAS plus Phoenix because it keeps metric execution open, trace storage self-hostable, and vendor lock-in low. They can be revisited later if hosted collaboration or richer managed workflows become more valuable than self-hosting.
+
+Research references checked on 2026-05-09:
+
+- RAGAS metrics docs: https://docs.ragas.io/en/latest/concepts/metrics/available_metrics/
+- RAGAS pytest CI docs: https://docs.ragas.io/en/latest/howtos/applications/add_to_ci/
+- Phoenix docs: https://arize.com/docs/phoenix
+- OpenInference docs: https://arize-ai.github.io/openinference/
+- DeepEval RAG docs: https://deepeval.com/docs/getting-started-rag
+- LangSmith RAG evaluation docs: https://docs.langchain.com/langsmith/evaluate-rag-tutorial
 
 ### Scope
 
-- Build evaluation dataset:
+- Add evaluation dependencies and configuration:
+  - `ragas` for metric execution.
+  - `datasets` or a repo-local JSONL adapter for golden dataset loading.
+  - `arize-phoenix` / OpenInference instrumentation for local and deployed trace capture.
+  - pytest marker `ragas_ci` so expensive evals run intentionally, not during every unit-test loop.
+  - `.env` feature flags for evaluator model provider, evaluator model, Phoenix endpoint, sample rate, and CI threshold mode.
+- Build versioned evaluation datasets:
   - golden questions.
   - expected answer characteristics.
   - relevant source documents.
+  - relevant chunk IDs where known.
+  - expected citation IDs or citation source constraints.
   - adversarial questions.
   - freshness-sensitive questions.
   - multi-turn citation questions.
-- Implement RAGAS metrics:
+  - negative-answer cases where the correct behavior is to say the corpus is insufficient.
+  - tool-use cases once Tavily and Python tools exist.
+- Create an eval case schema that records:
+  - `eval_case_id`.
+  - `dataset_name`.
+  - `dataset_version`.
+  - `question`.
+  - `conversation_history`.
+  - `expected_answer_traits`.
+  - `reference_answer` when available.
+  - `expected_document_ids`.
+  - `expected_chunk_ids`.
+  - `expected_citation_rules`.
+  - `tags`.
+  - `owner`.
+- Implement an evaluation runner that executes the real pipeline and stores:
+  - retrieved contexts.
+  - generated answer.
+  - final citations.
+  - retrieval scores and backend decisions.
+  - prompt/model/provider versions.
+  - corpus, embedding, and index versions.
+  - latency and token/cost data.
+  - trace ID.
+- Implement RAGAS metrics as score columns:
   - faithfulness.
   - context precision.
+  - context recall when expected documents/chunks or reference answers are available.
   - answer relevance.
-  - context recall if ground truth is available.
+  - noise sensitivity for adversarial/retrieval-noise cases when available.
+- Implement citation-specific deterministic checks:
+  - every final citation maps to a retrieved chunk.
+  - every cited chunk maps to a persisted document and source location.
+  - answer unsupported-claim ratio.
+  - citation coverage for high-confidence factual claims.
+  - refusal correctness for insufficient-context questions.
 - Add retrieval-specific metrics:
   - hit rate at k.
   - MRR.
   - nDCG.
+  - recall at k.
+  - backend agreement between pgvector and Qdrant on canary queries.
   - citation verification pass rate.
-- Add scheduled evaluation jobs.
-- Add threshold monitor.
+- Add continuous evaluation modes:
+  - local smoke eval on a tiny fixture set.
+  - CI release gate using a stable golden subset and `pytest -m ragas_ci`.
+  - nightly scheduled eval against the full golden set.
+  - production shadow eval over sampled real conversations after privacy and access-policy filtering.
+  - post-ingestion/re-index eval over affected document slices.
+- Add traceability and storage:
+  - relational tables or files for eval datasets, eval runs, eval scores, and eval artifacts.
+  - object storage path for per-run artifacts.
+  - Phoenix trace export for every eval run.
+  - immutable run summary with application git SHA, dependency lock hash, prompt version, model versions, corpus version, embedding version, and index version.
+- Add threshold monitor with rolling-window rules:
+  - block release on regression beyond agreed tolerance in the CI golden subset.
+  - alert on nightly/full-set metric degradation.
+  - require minimum sample size before re-indexing.
+  - separate retrieval failures from generation/citation failures.
 - Add re-index trigger workflow:
   - alert.
   - isolate affected source/index version.
   - run validation subset.
   - re-index if confirmed.
   - compare before/after results.
-- Store eval runs and artifacts.
+- Add human review workflow for failed cases:
+  - mark false-positive eval failures.
+  - add production failures back into the golden dataset.
+  - update expected answers/citations with review notes.
 
 ### Deliverables
 
 - Evaluation service.
 - RAGAS integration.
-- Golden dataset format.
-- Evaluation dashboards.
+- Phoenix/OpenInference trace integration.
+- Versioned golden dataset format.
+- Eval runner CLI and scheduled worker.
+- `pytest` CI gate for stable evaluation subset.
+- Eval run and score persistence.
+- Evaluation dashboards with dataset, run, score, latency, token/cost, trace ID, corpus version, and index version filters.
 - Threshold alerting.
 - Re-index trigger workflow.
+- Documentation for adding, reviewing, and promoting eval cases.
 
 ### Acceptance Criteria
 
-- Evaluation can run locally and in CI against a small fixture set.
-- Scheduled production evaluation records trend history.
+- Evaluation can run locally against a tiny fixture set without external production infrastructure.
+- CI can run the stable `ragas_ci` subset and block releases on agreed regressions.
+- Every eval result can be traced back to the exact dataset version, code version, prompt version, model provider/model version, corpus version, embedding version, index version, and Phoenix trace ID.
+- Scheduled production evaluation records trend history after privacy/access-policy filtering.
 - Quality threshold breaches create actionable alerts.
-- Re-indexing is not triggered by single noisy samples.
+- Re-indexing is not triggered by single noisy samples and requires a validation subset confirming retrieval/index degradation.
 - Releases are blocked if core evaluation scores regress beyond agreed tolerance.
+- Failed eval cases can be reviewed, labeled, and promoted into future golden datasets.
 
 ## Phase 9 - API, UX Contracts, and External Integration
 
@@ -585,15 +706,19 @@ Infrastructure
   - tool latency.
   - token usage.
   - citation verification pass rate.
-  - RAGAS scores.
+  - RAGAS scores by dataset and index version.
+  - continuous evaluation pass/fail counts.
+  - eval cost and evaluator-model latency.
   - ingestion throughput.
   - queue depth.
   - vector-store error rates.
-- Add distributed tracing across API, agent graph, retrieval, tools, and evaluation.
+- Add distributed tracing across API, agent graph, retrieval, tools, and evaluation using OpenTelemetry/OpenInference-compatible spans.
 - Add alerting:
   - elevated p95 latency.
   - vector-store failure.
   - RAGAS degradation.
+  - CI evaluation gate failure.
+  - production shadow-eval failure spike.
   - citation verification failure spike.
   - ingestion backlog.
   - OpenAI/Tavily rate-limit exhaustion.
@@ -619,6 +744,7 @@ Infrastructure
 
 - Every production request has a trace ID.
 - Operators can diagnose slow answers by stage.
+- Operators can open the trace for any failed eval run and see retrieval, generation, citation verification, and tool spans.
 - Secrets are never exposed to agent tools or logs.
 - Prompt-injection test cases are part of CI or release validation.
 - Sandbox policy is validated before production enablement.
@@ -706,7 +832,7 @@ Infrastructure
   - security tests.
   - prompt-injection tests.
   - tool failure tests.
-  - RAGAS regression suite.
+  - RAGAS regression suite with deterministic retrieval/citation checks.
   - backup restore drill.
   - incident runbook drill.
 
@@ -811,7 +937,7 @@ Infrastructure
 ### Milestone 3 - Evaluation and Production API
 
 - Complete phases 8 through 10.
-- Add RAGAS evaluation, protected APIs, observability, security controls, and tool hardening.
+- Add RAGAS evaluation, Phoenix/OpenInference traceability, protected APIs, observability, security controls, and tool hardening.
 
 ### Milestone 4 - AWS Deployment and Launch
 
@@ -827,6 +953,7 @@ Infrastructure
 - Whether Python execution is enabled for all users, trusted users only, or admin workflows only.
 - How document-level access controls are represented and enforced during retrieval.
 - Whether evaluation runs on production samples, synthetic sets, or curated golden sets only.
+- Whether Phoenix is self-hosted from the start or introduced first as local/dev tooling with a later production deployment.
 
 ## Production Risks and Mitigations
 
@@ -837,7 +964,7 @@ Infrastructure
 | Citations are inaccurate | Loss of trust | Enforce citation verifier before final answer, keep source offsets, test traceability |
 | Prompt injection from retrieved/web content | Unsafe or manipulated output | Treat retrieved content as untrusted, isolate instructions, add injection tests |
 | Python sandbox escape or abuse | Security incident | Use isolated runtime, strict resource limits, no secret access, audit logs |
-| Evaluation scores are noisy | False re-indexing or missed regressions | Use rolling windows, minimum sample sizes, and human-reviewed golden sets |
+| Evaluation scores are noisy | False re-indexing or missed regressions | Use deterministic retrieval/citation checks, RAGAS rolling windows, minimum sample sizes, human-reviewed golden sets, and trace-level failure review |
 | Dual vector stores drift | Inconsistent results | Track index versions, reconcile counts, run consistency checks |
 | Re-indexing overloads production | Service degradation | Use queue rate limits, off-peak scheduling, shadow indexes, staged swaps |
 
@@ -847,7 +974,7 @@ Infrastructure
 - Dense, sparse, hybrid, and re-ranked retrieval are benchmarked and documented.
 - LangGraph agent workflows pass end-to-end tests for normal, degraded, and failure paths.
 - Citations are verified before final answer delivery.
-- RAGAS and retrieval evaluation suites run automatically.
+- RAGAS, deterministic retrieval/citation checks, and traceable continuous evaluation suites run automatically.
 - Alerts exist for latency, quality, tool failures, and ingestion failures.
 - Python sandbox and Tavily tool use are policy-controlled and audited.
 - AWS staging and production environments are reproducible from infrastructure definitions.
