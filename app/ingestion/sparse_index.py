@@ -7,7 +7,12 @@ import math
 import re
 from pathlib import Path
 
-from app.ingestion.schemas import CanonicalDocument, ChunkPayload, SearchResult
+from app.ingestion.schemas import (
+    CanonicalDocument,
+    ChunkPayload,
+    RetrievalFilters,
+    SearchResult,
+)
 
 
 class SparseIndex:
@@ -45,16 +50,31 @@ class SparseIndex:
                 "title": chunk.title,
                 "source_uri": chunk.source_uri,
                 "location_marker": chunk.location_marker,
+                "access_policy": document.access_policy,
+                "embedding_version": chunk.embedding_version,
+                "index_version": chunk.index_version,
+                "section": chunk.section,
+                "page": chunk.page,
+                "metadata": document.metadata,
                 "text": chunk.text,
                 "tokens": self._tokenize(chunk.text),
             }
         self._write_index(payload)
 
-    async def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        top_k: int = 5,
+        filters: RetrievalFilters | None = None,
+    ) -> list[SearchResult]:
         """Search indexed chunks using a BM25-style relevance score."""
 
         payload = self._read_index()
-        chunks = list(payload["chunks"].values())
+        chunks = [
+            chunk
+            for chunk in payload["chunks"].values()
+            if self._matches_filters(chunk, filters)
+        ]
         if not chunks:
             return []
         query_tokens = self._tokenize(query)
@@ -76,10 +96,53 @@ class SparseIndex:
                     source_uri=chunk["source_uri"],
                     location_marker=chunk.get("location_marker"),
                     score=score,
+                    sparse_score=score,
+                    source_backend="sparse",
+                    metadata={
+                        "access_policy": chunk.get("access_policy", "internal"),
+                        "embedding_version": chunk.get("embedding_version"),
+                        "index_version": chunk.get("index_version"),
+                        "section": chunk.get("section"),
+                        "page": chunk.get("page"),
+                        "document_metadata": chunk.get("metadata", {}),
+                    },
                     text=chunk["text"],
                 )
             )
         return sorted(results, key=lambda item: item.score, reverse=True)[:top_k]
+
+    def _matches_filters(
+        self,
+        chunk: dict[str, object],
+        filters: RetrievalFilters | None,
+    ) -> bool:
+        """Return whether a persisted sparse chunk satisfies the requested filters."""
+
+        if filters is None:
+            return True
+        if (
+            filters.document_ids
+            and chunk.get("document_id") not in filters.document_ids
+        ):
+            return False
+        if filters.source_uris and chunk.get("source_uri") not in filters.source_uris:
+            return False
+        if (
+            filters.access_policies
+            and chunk.get("access_policy", "internal") not in filters.access_policies
+        ):
+            return False
+        if (
+            filters.embedding_version is not None
+            and chunk.get("embedding_version") != filters.embedding_version
+        ):
+            return False
+        if (
+            filters.index_version is not None
+            and chunk.get("index_version") != filters.index_version
+        ):
+            return False
+        return True
 
     def _score_chunk(
         self,

@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 citebot-ingest = "app.ingestion.cli:main"
+citebot-retrieval-harness = "app.evaluation.retrieval_harness:main"
 
 [project.optional-dependencies]
 dev = [

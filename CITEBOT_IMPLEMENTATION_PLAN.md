@@ -43,8 +43,8 @@ Status as of 2026-05-09, based on the repository contents and passing local test
 | Phase 0 - Product, Risk, and Architecture Definition | Partially implemented | Architecture documents exist in `docs/architecture`, but ADRs and full stakeholder sign-off artifacts are not yet present. |
 | Phase 1 - Repository, Runtime, and Development Foundation | Implemented | FastAPI bootstrap, typed config, Docker Compose, health/readiness/version endpoints, lint/test commands, and local run documentation are present. |
 | Phase 2 - Document Ingestion and Corpus Management | Implemented | Ingestion CLI/admin API, document and chunk schema, normalization, chunking, mock/OpenAI/Gemini embedding path, object storage, metadata persistence, pgvector/Qdrant writers, sparse index, job tracking, and ingestion tests are present. |
-| Phase 3 - Dense Retrieval with pgvector and Qdrant | Not implemented | Index write paths exist, but retrieval interface, dense search service, fallback routing, and benchmark harness are not yet implemented. |
-| Phase 4 - Hybrid Search and Cross-Encoder Re-ranking | Not implemented | No hybrid fusion or re-ranker implementation yet. |
+| Phase 3 - Dense Retrieval with pgvector and Qdrant | Partially implemented | Retrieval interface, dense search service, backend routing, metadata filters, degraded local fallback, and a Docker-backed benchmark/integration harness are implemented. Backend-specific scale benchmarks and richer integration coverage are still pending. |
+| Phase 4 - Hybrid Search and Cross-Encoder Re-ranking | Partially implemented | Hybrid fusion, score explainability, deduplication, and default reranking are implemented. A production cross-encoder provider and tuning artifacts are still pending. |
 | Phase 5 - LangGraph Agent Orchestration | Not implemented | No LangGraph state machine or node graph yet. |
 | Phase 6 - Agentic Tools | Not implemented | No production Tavily, sandbox, or citation verifier integration yet. |
 | Phase 7 - Answer Generation, Citations, and Context Compression | Not implemented | No answer synthesis or citation-grounded generation path yet. |

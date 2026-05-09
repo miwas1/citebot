@@ -1,0 +1,17 @@
+[
+  {
+    "name": "citation-traceability",
+    "query": "citation traceability stable chunk identifiers",
+    "top_k": 3
+  },
+  {
+    "name": "hybrid-retrieval",
+    "query": "hybrid retrieval keyword matching",
+    "top_k": 3
+  },
+  {
+    "name": "reindex-trigger",
+    "query": "reindexing embedding versions quality thresholds",
+    "top_k": 3
+  }
+]

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import math
+import re
 from collections.abc import Sequence
 
 import httpx
@@ -33,17 +35,24 @@ class MockEmbedder(BaseEmbedder):
         return [self._embed_single_text(text) for text in texts]
 
     def _embed_single_text(self, text: str) -> list[float]:
-        """Project a text string into a repeatable float vector."""
+        """Project text into a repeatable token-aware vector for local similarity tests."""
 
-        seed = hashlib.sha256(text.encode("utf-8")).digest()
-        values: list[float] = []
-        while len(values) < self._dimensions:
-            seed = hashlib.sha256(seed).digest()
-            for byte in seed:
-                values.append((byte / 255.0) * 2 - 1)
-                if len(values) == self._dimensions:
-                    break
-        return values
+        values = [0.0] * self._dimensions
+        for token in self._tokenize(text):
+            token_seed = hashlib.sha256(token.encode("utf-8")).digest()
+            index = int.from_bytes(token_seed[:4], byteorder="big") % self._dimensions
+            direction = 1.0 if token_seed[4] % 2 == 0 else -1.0
+            magnitude = 0.5 + (token_seed[5] / 255.0)
+            values[index] += direction * magnitude
+        norm = math.sqrt(sum(value * value for value in values))
+        if norm == 0:
+            return values
+        return [value / norm for value in values]
+
+    def _tokenize(self, text: str) -> list[str]:
+        """Split text into lowercase search-style tokens for deterministic embeddings."""
+
+        return re.findall(r"[a-z0-9]+", text.lower())
 
 
 class OpenAIEmbedder(BaseEmbedder):

@@ -19,6 +19,9 @@ from app.ingestion.repository import IngestionRepository
 from app.ingestion.service import IngestionService
 from app.ingestion.sparse_index import SparseIndex
 from app.ingestion.vector_writers import PgVectorWriter, QdrantWriter
+from app.retrieval.repository import RetrievalRepository
+from app.retrieval.reranker import build_reranker
+from app.retrieval.service import RetrievalService
 
 
 @dataclass(slots=True)
@@ -29,6 +32,7 @@ class ServiceContainer:
     session_manager: DatabaseSessionManager
     health_service: HealthService
     ingestion_service: IngestionService
+    retrieval_service: RetrievalService
 
     async def initialize(self) -> None:
         """Initialize storage, tables, and external writer schemas."""
@@ -63,6 +67,16 @@ def build_container(settings: Settings) -> ServiceContainer:
         collection_name=settings.qdrant_collection,
         enabled=settings.enable_qdrant,
     )
+    retrieval_repository = RetrievalRepository(session_manager)
+    reranker = build_reranker(settings)
+    retrieval_service = RetrievalService(
+        settings=settings,
+        session_manager=session_manager,
+        repository=retrieval_repository,
+        embedder=embedder,
+        sparse_index=sparse_index,
+        reranker=reranker,
+    )
     ingestion_service = IngestionService(
         settings=settings,
         repository=repository,
@@ -81,6 +95,7 @@ def build_container(settings: Settings) -> ServiceContainer:
         session_manager=session_manager,
         health_service=health_service,
         ingestion_service=ingestion_service,
+        retrieval_service=retrieval_service,
     )
 
 

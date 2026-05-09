@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.core.config import get_settings
 from app.core.lifecycle import build_container
+from app.ingestion.schemas import RetrievalFilters, SearchRequest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,10 +30,27 @@ def build_parser() -> argparse.ArgumentParser:
     reindex_parser.add_argument("--index-version", default="v1")
 
     search_parser = subparsers.add_parser(
-        "search", help="Search the local sparse index."
+        "search", help="Search dense, sparse, or hybrid retrieval indexes."
     )
     search_parser.add_argument("query")
     search_parser.add_argument("--top-k", type=int, default=5)
+    search_parser.add_argument(
+        "--strategy",
+        choices=["sparse", "dense", "hybrid"],
+        default="hybrid",
+    )
+    search_parser.add_argument(
+        "--index-target",
+        choices=["auto", "pgvector", "qdrant", "local"],
+        default="auto",
+    )
+    search_parser.add_argument("--document-id", action="append", default=[])
+    search_parser.add_argument("--source-uri", action="append", default=[])
+    search_parser.add_argument("--access-policy", action="append", default=[])
+    search_parser.add_argument("--embedding-version")
+    search_parser.add_argument("--index-version")
+    search_parser.add_argument("--include-explain", action="store_true")
+    search_parser.add_argument("--disable-reranking", action="store_true")
     return parser
 
 
@@ -59,9 +77,22 @@ async def run_cli() -> int:
             )
             print(result.model_dump_json(indent=2))
         else:
-            results = await container.ingestion_service.search(
-                args.query, top_k=args.top_k
+            search_request = SearchRequest(
+                query=args.query,
+                top_k=args.top_k,
+                strategy=args.strategy,
+                index_target=args.index_target,
+                filters=RetrievalFilters(
+                    document_ids=list(args.document_id),
+                    source_uris=list(args.source_uri),
+                    access_policies=list(args.access_policy),
+                    embedding_version=args.embedding_version,
+                    index_version=args.index_version,
+                ),
+                include_explain=args.include_explain,
+                enable_reranking=False if args.disable_reranking else None,
             )
+            results = await container.retrieval_service.search(search_request)
             rendered_results = ",\n".join(
                 result.model_dump_json(indent=2) for result in results
             )

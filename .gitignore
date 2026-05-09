@@ -8,6 +8,7 @@ citebot.db
 storage/
 dist/
 build/
+artifacts/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

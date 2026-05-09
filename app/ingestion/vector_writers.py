@@ -49,6 +49,14 @@ class PgVectorWriter:
                     """
                 )
             )
+            await session.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS chunk_embeddings_lookup_idx
+                    ON chunk_embeddings (document_id, embedding_version, index_version)
+                    """
+                )
+            )
 
     async def upsert_chunks(
         self,
@@ -164,6 +172,8 @@ class QdrantWriter:
                         "source_uri": document.source_uri,
                         "title": document.title,
                         "location_marker": chunk.location_marker,
+                        "access_policy": document.access_policy,
+                        "metadata": document.metadata,
                         "text": chunk.text,
                         "embedding_model": chunk.embedding_model,
                         "embedding_version": chunk.embedding_version,

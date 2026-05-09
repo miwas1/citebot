@@ -46,6 +46,27 @@ class Settings(BaseSettings):
     )
     chunk_size: int = Field(default=800, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=120, alias="CHUNK_OVERLAP")
+    dense_primary_backend: str = Field(
+        default="auto",
+        alias="DENSE_PRIMARY_BACKEND",
+    )
+    hybrid_dense_weight: float = Field(default=0.6, alias="HYBRID_DENSE_WEIGHT")
+    hybrid_sparse_weight: float = Field(default=0.4, alias="HYBRID_SPARSE_WEIGHT")
+    hybrid_candidate_count: int = Field(
+        default=12,
+        alias="HYBRID_CANDIDATE_COUNT",
+    )
+    dense_search_limit: int = Field(default=256, alias="DENSE_SEARCH_LIMIT")
+    enable_reranking: bool = Field(default=True, alias="ENABLE_RERANKING")
+    reranker_provider: str = Field(default="heuristic", alias="RERANKER_PROVIDER")
+    reranker_model: str = Field(
+        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        alias="RERANKER_MODEL",
+    )
+    reranker_candidate_count: int = Field(
+        default=8,
+        alias="RERANKER_CANDIDATE_COUNT",
+    )
 
     @model_validator(mode="after")
     def validate_production_requirements(self) -> "Settings":
@@ -73,6 +94,26 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         if self.embedding_dimension <= 0:
             msg = "EMBEDDING_DIMENSION must be positive"
+            raise ValueError(msg)
+        if self.dense_primary_backend not in {"auto", "pgvector", "qdrant", "local"}:
+            msg = (
+                "DENSE_PRIMARY_BACKEND must be one of auto, pgvector, qdrant, or local"
+            )
+            raise ValueError(msg)
+        if self.hybrid_dense_weight < 0 or self.hybrid_sparse_weight < 0:
+            msg = "HYBRID_DENSE_WEIGHT and HYBRID_SPARSE_WEIGHT must be non-negative"
+            raise ValueError(msg)
+        if self.hybrid_dense_weight + self.hybrid_sparse_weight == 0:
+            msg = "HYBRID_DENSE_WEIGHT and HYBRID_SPARSE_WEIGHT cannot both be zero"
+            raise ValueError(msg)
+        if self.hybrid_candidate_count <= 0:
+            msg = "HYBRID_CANDIDATE_COUNT must be positive"
+            raise ValueError(msg)
+        if self.dense_search_limit <= 0:
+            msg = "DENSE_SEARCH_LIMIT must be positive"
+            raise ValueError(msg)
+        if self.reranker_candidate_count <= 0:
+            msg = "RERANKER_CANDIDATE_COUNT must be positive"
             raise ValueError(msg)
         return self
 

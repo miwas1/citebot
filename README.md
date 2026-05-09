@@ -35,8 +35,16 @@ with `GEMINI_EMBEDDING_MODEL` for Gemini.
 
 ```bash
 python -m app.ingestion.cli ingest data/sample_corpus
-python -m app.ingestion.cli search "citation traceability" --top-k 3
+python -m app.ingestion.cli search "citation traceability" --top-k 3 --strategy hybrid --include-explain
 ```
+
+Search supports:
+
+- `--strategy sparse|dense|hybrid`
+- `--index-target auto|pgvector|qdrant|local`
+- `--document-id`, `--source-uri`, and `--access-policy` filters
+- `--embedding-version` and `--index-version` filters
+- `--disable-reranking` to inspect fused rankings without the reranker
 
 ## API Endpoints
 
@@ -48,11 +56,39 @@ python -m app.ingestion.cli search "citation traceability" --top-k 3
 - `POST /api/v1/admin/ingestion/search`
 - `GET /api/v1/admin/ingestion/metrics`
 
+The admin search endpoint accepts dense, sparse, and hybrid retrieval requests and can return per-result explain payloads showing backend choice, fallback decisions, fusion metadata, and reranker scores.
+
 ## Development Commands
 
 ```bash
 make test
 make lint
+make integration-retrieval
+make benchmark-retrieval
 make dev-down
+```
+
+## Real Backend Benchmarking
+
+Use the retrieval harness to compare live `pgvector` and `qdrant` responses through the API.
+
+```bash
+make integration-retrieval
+make benchmark-retrieval
+```
+
+The harness will:
+
+- ensure the Docker Compose stack is up,
+- wait for `/api/v1/ready`,
+- ingest the sample corpus into PostgreSQL, pgvector, Qdrant, and the sparse index,
+- run dense retrieval requests against `pgvector` and `qdrant`,
+- write JSON reports under `artifacts/retrieval-benchmarks/`.
+
+You can also run it directly:
+
+```bash
+python -m app.evaluation.retrieval_harness integration --start-compose
+python -m app.evaluation.retrieval_harness benchmark --start-compose --iterations 10
 ```
 

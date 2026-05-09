@@ -7,6 +7,8 @@
 - Local object-store abstraction backed by the filesystem.
 - Pluggable embedding pipeline with deterministic local embeddings and HTTP-ready OpenAI expansion point.
 - pgvector, Qdrant, and sparse index writers behind explicit ingestion orchestration.
+- Dense retrieval service with backend routing across pgvector, Qdrant, and a local fallback path.
+- Hybrid retrieval pipeline that fuses dense and sparse candidates, deduplicates chunk IDs, and applies reranking.
 
 ## Phase 2 Ingestion Flow
 
@@ -16,3 +18,11 @@
 4. Chunk normalized text with overlap and stable chunk identifiers.
 5. Generate embeddings and write metadata plus index payloads.
 6. Persist job counters for observability and replay.
+
+## Retrieval Flow
+
+1. Embed the query through the configured embedding provider.
+2. Route dense retrieval to Qdrant or pgvector, with local fallback when remote stores are unavailable.
+3. Run sparse BM25-style retrieval over the persisted sparse index.
+4. Normalize dense and sparse scores, apply weighted reciprocal-rank fusion, and remove duplicate chunks.
+5. Rerank the fused candidate window before returning explainable results to the caller.

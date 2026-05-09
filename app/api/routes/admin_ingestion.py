@@ -53,9 +53,9 @@ async def search_ingested_chunks(
     request: SearchRequest,
     container: ContainerDependency,
 ) -> list[SearchResult]:
-    """Search the locally persisted sparse index for validation workflows."""
+    """Search indexed chunks through the configured dense, sparse, or hybrid retriever."""
 
-    return await container.ingestion_service.search(request.query, request.top_k)
+    return await container.retrieval_service.search(request)
 
 
 @router.get("/metrics", response_model=IngestionMetrics)
