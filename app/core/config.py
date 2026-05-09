@@ -67,6 +67,65 @@ class Settings(BaseSettings):
         default=8,
         alias="RERANKER_CANDIDATE_COUNT",
     )
+    answer_provider: str = Field(default="mock", alias="ANSWER_PROVIDER")
+    answer_model: str = Field(default="gpt-5", alias="ANSWER_MODEL")
+    gemini_answer_model: str = Field(
+        default="gemini-3-flash-preview",
+        alias="GEMINI_ANSWER_MODEL",
+    )
+    research_top_k: int = Field(default=5, alias="RESEARCH_TOP_K")
+    research_min_context_score: float = Field(
+        default=0.2,
+        alias="RESEARCH_MIN_CONTEXT_SCORE",
+    )
+    research_recent_turns: int = Field(default=4, alias="RESEARCH_RECENT_TURNS")
+    research_summary_char_limit: int = Field(
+        default=600,
+        alias="RESEARCH_SUMMARY_CHAR_LIMIT",
+    )
+    research_context_char_limit: int = Field(
+        default=320,
+        alias="RESEARCH_CONTEXT_CHAR_LIMIT",
+    )
+    research_preserve_citation_turns: int = Field(
+        default=8,
+        alias="RESEARCH_PRESERVE_CITATION_TURNS",
+    )
+    allow_web_search_default: bool = Field(
+        default=False,
+        alias="ALLOW_WEB_SEARCH_DEFAULT",
+    )
+    allow_python_execution_default: bool = Field(
+        default=False,
+        alias="ALLOW_PYTHON_EXECUTION_DEFAULT",
+    )
+    tavily_api_key: str | None = Field(default=None, alias="TAVILY_API_KEY")
+    tavily_base_url: str = Field(
+        default="https://api.tavily.com/search",
+        alias="TAVILY_BASE_URL",
+    )
+    tavily_timeout_seconds: float = Field(
+        default=8.0,
+        alias="TAVILY_TIMEOUT_SECONDS",
+    )
+    tavily_max_results: int = Field(default=5, alias="TAVILY_MAX_RESULTS")
+    tavily_search_depth: str = Field(
+        default="basic",
+        alias="TAVILY_SEARCH_DEPTH",
+    )
+    tavily_max_retries: int = Field(default=2, alias="TAVILY_MAX_RETRIES")
+    python_sandbox_timeout_seconds: float = Field(
+        default=2.0,
+        alias="PYTHON_SANDBOX_TIMEOUT_SECONDS",
+    )
+    python_sandbox_memory_mb: int = Field(
+        default=128,
+        alias="PYTHON_SANDBOX_MEMORY_MB",
+    )
+    python_sandbox_output_bytes: int = Field(
+        default=4000,
+        alias="PYTHON_SANDBOX_OUTPUT_BYTES",
+    )
 
     @model_validator(mode="after")
     def validate_production_requirements(self) -> "Settings":
@@ -114,6 +173,59 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         if self.reranker_candidate_count <= 0:
             msg = "RERANKER_CANDIDATE_COUNT must be positive"
+            raise ValueError(msg)
+        if self.answer_provider not in {"mock", "openai", "gemini"}:
+            msg = "ANSWER_PROVIDER must be one of mock, openai, or gemini"
+            raise ValueError(msg)
+        if self.research_top_k <= 0:
+            msg = "RESEARCH_TOP_K must be positive"
+            raise ValueError(msg)
+        if self.research_recent_turns <= 0:
+            msg = "RESEARCH_RECENT_TURNS must be positive"
+            raise ValueError(msg)
+        if self.research_summary_char_limit <= 0:
+            msg = "RESEARCH_SUMMARY_CHAR_LIMIT must be positive"
+            raise ValueError(msg)
+        if self.research_context_char_limit <= 0:
+            msg = "RESEARCH_CONTEXT_CHAR_LIMIT must be positive"
+            raise ValueError(msg)
+        if self.research_preserve_citation_turns <= 0:
+            msg = "RESEARCH_PRESERVE_CITATION_TURNS must be positive"
+            raise ValueError(msg)
+        if not 0 <= self.research_min_context_score <= 1:
+            msg = "RESEARCH_MIN_CONTEXT_SCORE must be between 0 and 1"
+            raise ValueError(msg)
+        if self.tavily_search_depth not in {"basic", "advanced", "fast", "ultra-fast"}:
+            msg = "TAVILY_SEARCH_DEPTH must be one of basic, advanced, fast, or ultra-fast"
+            raise ValueError(msg)
+        if self.tavily_max_results <= 0 or self.tavily_max_results > 20:
+            msg = "TAVILY_MAX_RESULTS must be between 1 and 20"
+            raise ValueError(msg)
+        if self.tavily_max_retries < 0:
+            msg = "TAVILY_MAX_RETRIES cannot be negative"
+            raise ValueError(msg)
+        if self.python_sandbox_timeout_seconds <= 0:
+            msg = "PYTHON_SANDBOX_TIMEOUT_SECONDS must be positive"
+            raise ValueError(msg)
+        if self.python_sandbox_memory_mb <= 0:
+            msg = "PYTHON_SANDBOX_MEMORY_MB must be positive"
+            raise ValueError(msg)
+        if self.python_sandbox_output_bytes <= 0:
+            msg = "PYTHON_SANDBOX_OUTPUT_BYTES must be positive"
+            raise ValueError(msg)
+        if (
+            self.app_env == "production"
+            and self.answer_provider == "openai"
+            and not self.openai_api_key
+        ):
+            msg = "OPENAI_API_KEY is required when APP_ENV=production and ANSWER_PROVIDER=openai"
+            raise ValueError(msg)
+        if (
+            self.app_env == "production"
+            and self.answer_provider == "gemini"
+            and not self.gemini_api_key
+        ):
+            msg = "GEMINI_API_KEY is required when APP_ENV=production and ANSWER_PROVIDER=gemini"
             raise ValueError(msg)
         return self
 

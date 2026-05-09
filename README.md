@@ -58,6 +58,44 @@ Search supports:
 
 The admin search endpoint accepts dense, sparse, and hybrid retrieval requests and can return per-result explain payloads showing backend choice, fallback decisions, fusion metadata, and reranker scores.
 
+## Research API
+
+The repository now includes a LangGraph-backed research workflow for grounded answer generation, citation verification, optional Tavily web enrichment, and optional sandboxed Python analysis.
+
+- `POST /api/v1/research/query`
+
+Example request:
+
+```json
+{
+	"session_id": "session-1",
+	"query": "How does citation traceability work in CiteBot?",
+	"top_k": 3,
+	"allow_web_search": false,
+	"allow_python_execution": false
+}
+```
+
+The response includes:
+
+- a structured answer with citations,
+- citation verification verdicts,
+- compressed memory for follow-up turns,
+- tool audit records,
+- approximate token accounting by graph stage,
+- a `trace_id` and explicit state transitions for replay/debugging.
+
+Relevant configuration flags:
+
+- `ANSWER_PROVIDER=mock|openai|gemini`
+- `ANSWER_MODEL` and `GEMINI_ANSWER_MODEL`
+- `ALLOW_WEB_SEARCH_DEFAULT`
+- `ALLOW_PYTHON_EXECUTION_DEFAULT`
+- `TAVILY_API_KEY`
+- `RESEARCH_MIN_CONTEXT_SCORE`
+- `PYTHON_SANDBOX_TIMEOUT_SECONDS`
+- `PYTHON_SANDBOX_MEMORY_MB`
+
 ## Development Commands
 
 ```bash

@@ -7,6 +7,9 @@ from dataclasses import dataclass
 
 from fastapi import FastAPI
 
+from app.agents.generation import build_answer_generator
+from app.agents.service import ResearchAgentService
+from app.agents.session_store import ResearchSessionStore
 from app.core.config import Settings, get_settings
 from app.core.health import HealthService
 from app.db.session import DatabaseSessionManager
@@ -22,6 +25,9 @@ from app.ingestion.vector_writers import PgVectorWriter, QdrantWriter
 from app.retrieval.repository import RetrievalRepository
 from app.retrieval.reranker import build_reranker
 from app.retrieval.service import RetrievalService
+from app.tools.citation_verifier import CitationVerifier
+from app.tools.python_sandbox import PythonSandboxTool
+from app.tools.web_search import build_web_search_tool
 
 
 @dataclass(slots=True)
@@ -33,6 +39,7 @@ class ServiceContainer:
     health_service: HealthService
     ingestion_service: IngestionService
     retrieval_service: RetrievalService
+    research_agent_service: ResearchAgentService
 
     async def initialize(self) -> None:
         """Initialize storage, tables, and external writer schemas."""
@@ -69,6 +76,11 @@ def build_container(settings: Settings) -> ServiceContainer:
     )
     retrieval_repository = RetrievalRepository(session_manager)
     reranker = build_reranker(settings)
+    answer_generator = build_answer_generator(settings)
+    web_search_tool = build_web_search_tool(settings)
+    python_sandbox = PythonSandboxTool(settings)
+    citation_verifier = CitationVerifier()
+    session_store = ResearchSessionStore()
     retrieval_service = RetrievalService(
         settings=settings,
         session_manager=session_manager,
@@ -89,6 +101,15 @@ def build_container(settings: Settings) -> ServiceContainer:
         pgvector_writer=pgvector_writer,
         qdrant_writer=qdrant_writer,
     )
+    research_agent_service = ResearchAgentService(
+        settings=settings,
+        retrieval_service=retrieval_service,
+        answer_generator=answer_generator,
+        web_search_tool=web_search_tool,
+        python_sandbox=python_sandbox,
+        citation_verifier=citation_verifier,
+        session_store=session_store,
+    )
     health_service = HealthService(settings, session_manager, qdrant_writer)
     return ServiceContainer(
         settings=settings,
@@ -96,6 +117,7 @@ def build_container(settings: Settings) -> ServiceContainer:
         health_service=health_service,
         ingestion_service=ingestion_service,
         retrieval_service=retrieval_service,
+        research_agent_service=research_agent_service,
     )
 
 

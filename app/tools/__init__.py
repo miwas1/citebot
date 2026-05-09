@@ -1,1 +1,1 @@
-"""Tooling package placeholder for later phases."""
+"""Production-safe tool adapters for research workflows."""

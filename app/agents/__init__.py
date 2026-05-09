@@ -1,1 +1,1 @@
-"""Agent orchestration package placeholder for later phases."""
+"""Agent orchestration and memory components for research workflows."""
