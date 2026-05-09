@@ -1,0 +1,63 @@
+services:
+  api:
+    build:
+      context: .
+    environment:
+      APP_ENV: development
+      API_PREFIX: /api/v1
+      DATABASE_URL: postgresql+asyncpg://citebot:citebot@postgres:5432/citebot
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: citebot_chunks
+      ENABLE_QDRANT: "true"
+      ENABLE_PGVECTOR: "true"
+      OBJECT_STORAGE_PATH: /app/storage/raw_documents
+      SPARSE_INDEX_PATH: /app/storage/sparse_index.json
+      EMBEDDING_PROVIDER: mock
+      EMBEDDING_MODEL: text-embedding-3-small
+      EMBEDDING_DIMENSION: "32"
+      CHUNK_SIZE: "800"
+      CHUNK_OVERLAP: "120"
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
+    volumes:
+      - ./storage:/app/storage
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: citebot
+      POSTGRES_PASSWORD: citebot
+      POSTGRES_DB: citebot
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U citebot -d citebot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
+
+  qdrant:
+    image: qdrant/qdrant:v1.13.4
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
+  qdrant_data:

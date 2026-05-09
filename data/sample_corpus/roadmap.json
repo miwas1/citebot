@@ -1,0 +1,10 @@
+{
+  "title": "Roadmap Notes",
+  "source_uri": "local://roadmap-notes",
+  "text": "Hybrid retrieval combines dense semantic search with sparse keyword matching. Re-indexing should be triggered when embedding versions change or quality thresholds regress.",
+  "publisher": "CiteBot Team",
+  "metadata": {
+    "topic": "retrieval",
+    "page": 2
+  }
+}

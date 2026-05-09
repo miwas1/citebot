@@ -1,0 +1,1 @@
+"""CiteBot application package."""
