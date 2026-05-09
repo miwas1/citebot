@@ -1,6 +1,6 @@
 PYTHON ?= python3
 
-.PHONY: dev-up dev-down test lint ingest-sample search-sample benchmark-retrieval integration-retrieval
+.PHONY: dev-up dev-down test lint ingest-sample search-sample benchmark-retrieval integration-retrieval eval-smoke eval-ci
 
 dev-up:
 	docker compose up --build
@@ -25,3 +25,9 @@ benchmark-retrieval:
 
 integration-retrieval:
 	$(PYTHON) -m app.evaluation.retrieval_harness integration --start-compose
+
+eval-smoke:
+	$(PYTHON) -m app.evaluation.cli run --source-path data/sample_corpus
+
+eval-ci:
+	$(PYTHON) -m pytest -m ragas_ci

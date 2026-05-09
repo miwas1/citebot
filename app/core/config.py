@@ -99,6 +99,24 @@ class Settings(BaseSettings):
         default=False,
         alias="ALLOW_PYTHON_EXECUTION_DEFAULT",
     )
+    research_api_key: str | None = Field(default=None, alias="RESEARCH_API_KEY")
+    admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
+    rate_limit_window_seconds: int = Field(
+        default=60,
+        alias="RATE_LIMIT_WINDOW_SECONDS",
+    )
+    research_rate_limit_requests: int = Field(
+        default=0,
+        alias="RESEARCH_RATE_LIMIT_REQUESTS",
+    )
+    admin_rate_limit_requests: int = Field(
+        default=0,
+        alias="ADMIN_RATE_LIMIT_REQUESTS",
+    )
+    observability_log_level: str = Field(
+        default="INFO",
+        alias="OBSERVABILITY_LOG_LEVEL",
+    )
     tavily_api_key: str | None = Field(default=None, alias="TAVILY_API_KEY")
     tavily_base_url: str = Field(
         default="https://api.tavily.com/search",
@@ -125,6 +143,54 @@ class Settings(BaseSettings):
     python_sandbox_output_bytes: int = Field(
         default=4000,
         alias="PYTHON_SANDBOX_OUTPUT_BYTES",
+    )
+    evaluation_dataset_path: Path = Field(
+        default=Path("./data/evaluations/tiny_smoke.json"),
+        alias="EVALUATION_DATASET_PATH",
+    )
+    evaluation_artifact_dir: Path = Field(
+        default=Path("./artifacts/evaluations"),
+        alias="EVALUATION_ARTIFACT_DIR",
+    )
+    evaluation_enable_ragas: bool = Field(
+        default=False,
+        alias="EVALUATION_ENABLE_RAGAS",
+    )
+    evaluation_ci_fail_on_missing_ragas: bool = Field(
+        default=False,
+        alias="EVALUATION_CI_FAIL_ON_MISSING_RAGAS",
+    )
+    evaluation_faithfulness_threshold: float = Field(
+        default=0.7,
+        alias="EVALUATION_FAITHFULNESS_THRESHOLD",
+    )
+    evaluation_context_precision_threshold: float = Field(
+        default=0.5,
+        alias="EVALUATION_CONTEXT_PRECISION_THRESHOLD",
+    )
+    evaluation_answer_relevance_threshold: float = Field(
+        default=0.5,
+        alias="EVALUATION_ANSWER_RELEVANCE_THRESHOLD",
+    )
+    evaluation_citation_support_threshold: float = Field(
+        default=1.0,
+        alias="EVALUATION_CITATION_SUPPORT_THRESHOLD",
+    )
+    evaluation_evaluator_provider: str = Field(
+        default="mock",
+        alias="EVALUATION_EVALUATOR_PROVIDER",
+    )
+    evaluation_evaluator_model: str = Field(
+        default="gpt-5",
+        alias="EVALUATION_EVALUATOR_MODEL",
+    )
+    evaluation_phoenix_endpoint: str | None = Field(
+        default=None,
+        alias="EVALUATION_PHOENIX_ENDPOINT",
+    )
+    evaluation_phoenix_sample_rate: float = Field(
+        default=1.0,
+        alias="EVALUATION_PHOENIX_SAMPLE_RATE",
     )
 
     @model_validator(mode="after")
@@ -195,6 +261,27 @@ class Settings(BaseSettings):
         if not 0 <= self.research_min_context_score <= 1:
             msg = "RESEARCH_MIN_CONTEXT_SCORE must be between 0 and 1"
             raise ValueError(msg)
+        if self.rate_limit_window_seconds <= 0:
+            msg = "RATE_LIMIT_WINDOW_SECONDS must be positive"
+            raise ValueError(msg)
+        if self.research_rate_limit_requests < 0:
+            msg = "RESEARCH_RATE_LIMIT_REQUESTS cannot be negative"
+            raise ValueError(msg)
+        if self.admin_rate_limit_requests < 0:
+            msg = "ADMIN_RATE_LIMIT_REQUESTS cannot be negative"
+            raise ValueError(msg)
+        if self.observability_log_level not in {
+            "CRITICAL",
+            "ERROR",
+            "WARNING",
+            "INFO",
+            "DEBUG",
+        }:
+            msg = (
+                "OBSERVABILITY_LOG_LEVEL must be one of CRITICAL, ERROR, WARNING, "
+                "INFO, or DEBUG"
+            )
+            raise ValueError(msg)
         if self.tavily_search_depth not in {"basic", "advanced", "fast", "ultra-fast"}:
             msg = "TAVILY_SEARCH_DEPTH must be one of basic, advanced, fast, or ultra-fast"
             raise ValueError(msg)
@@ -212,6 +299,24 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         if self.python_sandbox_output_bytes <= 0:
             msg = "PYTHON_SANDBOX_OUTPUT_BYTES must be positive"
+            raise ValueError(msg)
+        if not 0 <= self.evaluation_faithfulness_threshold <= 1:
+            msg = "EVALUATION_FAITHFULNESS_THRESHOLD must be between 0 and 1"
+            raise ValueError(msg)
+        if not 0 <= self.evaluation_context_precision_threshold <= 1:
+            msg = "EVALUATION_CONTEXT_PRECISION_THRESHOLD must be between 0 and 1"
+            raise ValueError(msg)
+        if not 0 <= self.evaluation_answer_relevance_threshold <= 1:
+            msg = "EVALUATION_ANSWER_RELEVANCE_THRESHOLD must be between 0 and 1"
+            raise ValueError(msg)
+        if not 0 <= self.evaluation_citation_support_threshold <= 1:
+            msg = "EVALUATION_CITATION_SUPPORT_THRESHOLD must be between 0 and 1"
+            raise ValueError(msg)
+        if self.evaluation_evaluator_provider not in {"mock", "openai", "gemini"}:
+            msg = "EVALUATION_EVALUATOR_PROVIDER must be one of mock, openai, or gemini"
+            raise ValueError(msg)
+        if not 0 < self.evaluation_phoenix_sample_rate <= 1:
+            msg = "EVALUATION_PHOENIX_SAMPLE_RATE must be between 0 and 1"
             raise ValueError(msg)
         if (
             self.app_env == "production"

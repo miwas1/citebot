@@ -45,14 +45,77 @@ Status as of 2026-05-09, based on the repository contents and passing local test
 | Phase 2 - Document Ingestion and Corpus Management | Implemented | Ingestion CLI/admin API, document and chunk schema, normalization, chunking, mock/OpenAI/Gemini embedding path, object storage, metadata persistence, pgvector/Qdrant writers, sparse index, job tracking, and ingestion tests are present. |
 | Phase 3 - Dense Retrieval with pgvector and Qdrant | Partially implemented | Retrieval interface, dense search service, backend routing, metadata filters, degraded local fallback, and a Docker-backed benchmark/integration harness are implemented. Backend-specific scale benchmarks and richer integration coverage are still pending. |
 | Phase 4 - Hybrid Search and Cross-Encoder Re-ranking | Partially implemented | Hybrid fusion, score explainability, deduplication, and default reranking are implemented. A production cross-encoder provider and tuning artifacts are still pending. |
-| Phase 5 - LangGraph Agent Orchestration | Partially implemented | LangGraph state machine, typed state, trace IDs, in-memory session persistence, and end-to-end research API tests are implemented. Durable persistence and richer replay tooling are still pending. |
+| Phase 5 - LangGraph Agent Orchestration | Partially implemented | LangGraph state machine, typed state, trace IDs, durable database-backed session persistence, and end-to-end research API tests are implemented. Richer replay and inspection tooling are still pending. |
 | Phase 6 - Agentic Tools | Partially implemented | Tavily adapter, bounded Python sandbox, citation verifier, and tool audit records are implemented. Stronger isolation and production observability depth are still pending. |
 | Phase 7 - Answer Generation, Citations, and Context Compression | Partially implemented | Structured answer synthesis, citation formatting, verification-aware guarded responses, token accounting, and compressed memory with citation graphs are implemented. Prompt tuning and deeper regression coverage are still pending. |
-| Phase 8 - Automated Evaluation and Quality Monitoring | Not implemented | No RAGAS, Phoenix/OpenInference, CI gate, or scheduled evaluation workflow yet. |
-| Phase 9 - API, UX Contracts, and External Integration | Partially implemented | Basic admin ingestion and health endpoints exist, but conversation, streaming, auth, and external contracts are not implemented. |
-| Phase 10 - Observability, Reliability, and Security Hardening | Partially implemented | Basic readiness checks exist, but structured observability, alerting, tracing, and hardening controls are not implemented. |
+| Phase 8 - Automated Evaluation and Quality Monitoring | Partially implemented | Local evaluation runner, persisted run artifacts, deterministic citation/retrieval checks, optional RAGAS scoring hooks, admin evaluation API, pytest CI marker, and smoke coverage are implemented. Scheduled workflows, deeper Phoenix/OpenInference integration, and longer-horizon monitoring are still pending. |
+| Phase 9 - API, UX Contracts, and External Integration | Partially implemented | Health, admin ingestion, admin evaluation, research query, and streaming research endpoints are implemented, along with optional API-key auth, rate limiting, and contract coverage for the current route set. Richer conversation lifecycle endpoints and broader external client contracts are still pending. |
+| Phase 10 - Observability, Reliability, and Security Hardening | Partially implemented | Readiness checks, request-scoped trace headers, structured request logging, in-process metrics, and basic rate-limit observability are implemented. Distributed tracing, alerting, dashboards, and deeper security hardening are still pending. |
 | Phase 11 - Deployment and Infrastructure | Partially implemented | Dockerfile and Docker Compose exist for local development, but AWS infrastructure and deployment automation are not implemented. |
 | Phase 12 - Performance, Scale, and Launch Readiness | Not implemented | No benchmark suite, launch checklist, or load-test artifacts yet. |
+
+## Remaining Work For Partial Phases
+
+The phases marked as partially implemented have a working local or lower-environment slice, but they are not yet complete against the acceptance criteria for production readiness. The list below captures the remaining work required to move each one to `Implemented`.
+
+### Phase 0 - Product, Risk, and Architecture Definition
+
+- Add ADRs for vector-store strategy, orchestration model, and evaluation strategy.
+- Record stakeholder sign-off artifacts or an equivalent repository-visible decision log.
+- Document explicit re-index triggers and quality investigation thresholds.
+
+### Phase 3 - Dense Retrieval with pgvector and Qdrant
+
+- Produce backend-specific benchmark artifacts at realistic sample sizes, including p50, p95, and p99 latency.
+- Expand live integration coverage for backend-specific filtering, fallback, and degraded-store scenarios.
+- Preserve a benchmark comparison report that justifies the primary backend choice.
+
+### Phase 4 - Hybrid Search and Cross-Encoder Re-ranking
+
+- Promote a production reranker path instead of relying on the default local heuristic reranker.
+- Capture tuning artifacts for chunking, candidate window size, fusion weights, and reranker impact.
+- Add regression coverage for reranker timeout, fallback, and disablement behavior.
+
+### Phase 5 - LangGraph Agent Orchestration
+
+- Add richer replay and inspection tooling for prior graph executions.
+- Document and validate lower-environment replay workflows beyond current local test coverage.
+
+### Phase 6 - Agentic Tools
+
+- Strengthen sandbox isolation beyond the current bounded local subprocess model.
+- Add deeper production observability for tool calls, including metrics and tracing.
+- Expand failure and abuse-path coverage for tool execution policies.
+
+### Phase 7 - Answer Generation, Citations, and Context Compression
+
+- Add deeper regression coverage for citation preservation across compression and follow-up turns.
+- Capture prompt tuning artifacts and evaluation evidence for generation defaults.
+- Add stronger regression coverage for insufficient-context, guarded-answer, and unsupported-claim flows.
+
+### Phase 8 - Automated Evaluation and Quality Monitoring
+
+- Add scheduled evaluation workflows for nightly or post-ingestion runs.
+- Replace the current trace manifest/export placeholder with deeper Phoenix/OpenInference integration.
+- Add longer-horizon trend monitoring, alerting, and review workflows for failed cases.
+
+### Phase 9 - API, UX Contracts, and External Integration
+
+- Add conversation lifecycle endpoints beyond the current single research query entry point.
+- Broaden contract coverage beyond the current research, health, and admin route set.
+- Add richer external client contracts for conversation history, citation retrieval, and trace summaries.
+
+### Phase 10 - Observability, Reliability, and Security Hardening
+
+- Extend the current request logging and in-process metrics into distributed tracing and service-wide telemetry across API, agent, retrieval, tools, and evaluation paths.
+- Define alerting and operator-facing dashboards.
+- Implement security hardening for secrets, prompt-injection handling, auditability, and incident response.
+
+### Phase 11 - Deployment and Infrastructure
+
+- Add AWS infrastructure-as-code and deployment automation.
+- Add migration, backup, restore, and environment-promotion workflows.
+- Document production sizing, rollout strategy, and operational deployment procedures.
 
 ## Proposed System Architecture
 

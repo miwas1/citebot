@@ -23,6 +23,7 @@ dependencies = [
 [project.scripts]
 citebot-ingest = "app.ingestion.cli:main"
 citebot-retrieval-harness = "app.evaluation.retrieval_harness:main"
+citebot-eval = "app.evaluation.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -30,6 +31,10 @@ dev = [
   "pytest-asyncio>=0.24.0,<1.0.0",
   "pytest-cov>=6.0.0,<7.0.0",
   "ruff>=0.7.0,<1.0.0"
+]
+evaluation = [
+  "datasets>=3.1.0,<4.0.0",
+  "ragas>=0.2.10,<1.0.0"
 ]
 
 [tool.setuptools.packages.find]
@@ -39,6 +44,9 @@ include = ["app*"]
 addopts = "-q"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+  "ragas_ci: stable evaluation subset for the CiteBot quality gate"
+]
 
 [tool.ruff]
 line-length = 100

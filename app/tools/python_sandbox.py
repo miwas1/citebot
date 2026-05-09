@@ -10,8 +10,11 @@ import textwrap
 from pathlib import Path
 from time import monotonic
 
-from app.agents.schemas import (PythonSandboxExecution, PythonSandboxResult,
-                                ToolCallRecord)
+from app.agents.schemas import (
+    PythonSandboxExecution,
+    PythonSandboxResult,
+    ToolCallRecord,
+)
 from app.core.config import Settings
 
 
@@ -45,7 +48,9 @@ class PythonSandboxTool:
                 error_message=str(error),
             )
         result = await _run_subprocess_execution(self._settings, execution)
-        status = "completed" if result.terminated_reason in {None, "completed"} else "failed"
+        status = (
+            "completed" if result.terminated_reason in {None, "completed"} else "failed"
+        )
         return result, _build_tool_record(
             execution,
             result,
@@ -123,7 +128,9 @@ async def _run_process(
         import resource
 
         memory_bytes = memory_mb * 1024 * 1024
-        resource.setrlimit(resource.RLIMIT_CPU, (max(1, int(timeout)), max(1, int(timeout) + 1)))
+        resource.setrlimit(
+            resource.RLIMIT_CPU, (max(1, int(timeout)), max(1, int(timeout) + 1))
+        )
         resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
         resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024))
 
@@ -209,4 +216,4 @@ def _build_tool_record(
         duration_ms=(monotonic() - started) * 1000,
         error_message=error_message,
         trace_id=execution.trace_id,
-    )    )
+    )

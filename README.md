@@ -55,6 +55,8 @@ Search supports:
 - `GET /api/v1/admin/ingestion/jobs/{job_id}`
 - `POST /api/v1/admin/ingestion/search`
 - `GET /api/v1/admin/ingestion/metrics`
+- `POST /api/v1/admin/evaluation/runs`
+- `GET /api/v1/admin/evaluation/runs/{run_id}`
 
 The admin search endpoint accepts dense, sparse, and hybrid retrieval requests and can return per-result explain payloads showing backend choice, fallback decisions, fusion metadata, and reranker scores.
 
@@ -96,6 +98,21 @@ Relevant configuration flags:
 - `PYTHON_SANDBOX_TIMEOUT_SECONDS`
 - `PYTHON_SANDBOX_MEMORY_MB`
 
+## Evaluation Workflow
+
+Phase 8 now includes a local evaluation runner that executes the real research pipeline against a versioned dataset, persists JSON artifacts, and applies CI-style thresholds for retrieval precision, citation support, verification pass rate, and optional RAGAS scores.
+
+Useful commands:
+
+```bash
+make eval-smoke
+make eval-ci
+python -m app.evaluation.cli run --source-path data/sample_corpus
+python -m app.evaluation.cli show <run_id>
+```
+
+Artifacts are written under `artifacts/evaluations/`. Install `citebot[evaluation]` when you want to enable optional RAGAS scoring.
+
 ## Development Commands
 
 ```bash
@@ -103,6 +120,8 @@ make test
 make lint
 make integration-retrieval
 make benchmark-retrieval
+make eval-smoke
+make eval-ci
 make dev-down
 ```
 

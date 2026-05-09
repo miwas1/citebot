@@ -83,12 +83,16 @@ class ResearchAgentService:
         self._session_store = session_store
         self._graph = self._build_graph().compile()
 
-    async def answer(self, request: ResearchQueryRequest) -> ResearchResponse:
+    async def answer(
+        self,
+        request: ResearchQueryRequest,
+        trace_id: str | None = None,
+    ) -> ResearchResponse:
         """Run the research graph for one request and persist updated session state."""
 
         session_id = request.session_id or create_session_id()
-        trace_id = create_trace_id()
-        stored_session = self._session_store.get(session_id)
+        trace_id = trace_id or create_trace_id()
+        stored_session = await self._session_store.get(session_id)
         initial_state: ResearchAgentState = {
             "session_id": session_id,
             "trace_id": trace_id,
@@ -110,7 +114,7 @@ class ResearchAgentService:
                 memory=result.get("memory", ResearchMemory()),
                 state_transitions=result.get("state_transitions", []),
             )
-        self._persist_session(
+        await self._persist_session(
             session_id=session_id,
             response=response,
             session_turns=result.get(
@@ -557,7 +561,7 @@ class ResearchAgentService:
             metadata=result.metadata,
         )
 
-    def _persist_session(
+    async def _persist_session(
         self,
         session_id: str,
         response: ResearchResponse,
@@ -565,7 +569,7 @@ class ResearchAgentService:
     ) -> None:
         """Store the latest session state for follow-up turns and replay."""
 
-        self._session_store.save(
+        await self._session_store.save(
             ResearchSessionRecord(
                 session_id=session_id,
                 turns=session_turns,

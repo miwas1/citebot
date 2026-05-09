@@ -1,0 +1,46 @@
+{
+  "dataset_name": "tiny_smoke",
+  "dataset_version": "2026-05-09",
+  "owner": "citebot",
+  "metadata": {
+    "purpose": "Local smoke evaluation subset for Phase 8"
+  },
+  "cases": [
+    {
+      "eval_case_id": "roadmap-hybrid-retrieval",
+      "question": "What does hybrid retrieval combine in CiteBot?",
+      "expected_answer_traits": [
+        "dense semantic search",
+        "sparse keyword matching"
+      ],
+      "reference_answer": "Hybrid retrieval combines dense semantic search with sparse keyword matching.",
+      "expected_source_uris": [
+        "local://roadmap-notes"
+      ],
+      "tags": [
+        "smoke",
+        "retrieval"
+      ],
+      "owner": "citebot",
+      "top_k": 3
+    },
+    {
+      "eval_case_id": "roadmap-reindex-trigger",
+      "question": "When should re-indexing be triggered?",
+      "expected_answer_traits": [
+        "embedding versions change",
+        "quality thresholds regress"
+      ],
+      "reference_answer": "Re-indexing should be triggered when embedding versions change or quality thresholds regress.",
+      "expected_source_uris": [
+        "local://roadmap-notes"
+      ],
+      "tags": [
+        "smoke",
+        "quality"
+      ],
+      "owner": "citebot",
+      "top_k": 3
+    }
+  ]
+}

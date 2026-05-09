@@ -13,6 +13,7 @@ from app.agents.session_store import ResearchSessionStore
 from app.core.config import Settings, get_settings
 from app.core.health import HealthService
 from app.db.session import DatabaseSessionManager
+from app.evaluation.service import EvaluationService
 from app.ingestion.chunker import SlidingWindowChunker
 from app.ingestion.embedder import build_embedder
 from app.ingestion.loaders import LocalCorpusLoader
@@ -40,6 +41,7 @@ class ServiceContainer:
     ingestion_service: IngestionService
     retrieval_service: RetrievalService
     research_agent_service: ResearchAgentService
+    evaluation_service: EvaluationService
 
     async def initialize(self) -> None:
         """Initialize storage, tables, and external writer schemas."""
@@ -80,7 +82,7 @@ def build_container(settings: Settings) -> ServiceContainer:
     web_search_tool = build_web_search_tool(settings)
     python_sandbox = PythonSandboxTool(settings)
     citation_verifier = CitationVerifier()
-    session_store = ResearchSessionStore()
+    session_store = ResearchSessionStore(session_manager)
     retrieval_service = RetrievalService(
         settings=settings,
         session_manager=session_manager,
@@ -110,6 +112,11 @@ def build_container(settings: Settings) -> ServiceContainer:
         citation_verifier=citation_verifier,
         session_store=session_store,
     )
+    evaluation_service = EvaluationService(
+        settings=settings,
+        ingestion_service=ingestion_service,
+        research_agent_service=research_agent_service,
+    )
     health_service = HealthService(settings, session_manager, qdrant_writer)
     return ServiceContainer(
         settings=settings,
@@ -118,6 +125,7 @@ def build_container(settings: Settings) -> ServiceContainer:
         ingestion_service=ingestion_service,
         retrieval_service=retrieval_service,
         research_agent_service=research_agent_service,
+        evaluation_service=evaluation_service,
     )
 
 

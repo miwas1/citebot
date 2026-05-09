@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.dependencies import get_container
 from app.core.lifecycle import ServiceContainer
+from app.core.security import require_admin_access
 from app.ingestion.schemas import (
     IngestionMetrics,
     IngestionRequest,
@@ -18,12 +19,14 @@ from app.ingestion.schemas import (
 router = APIRouter(prefix="/admin/ingestion")
 
 ContainerDependency = Annotated[ServiceContainer, Depends(get_container)]
+AdminAccessDependency = Annotated[None, Depends(require_admin_access)]
 
 
 @router.post("/jobs", response_model=JobStatusResponse)
 async def run_ingestion_job(
     request: IngestionRequest,
     container: ContainerDependency,
+    _: AdminAccessDependency,
 ) -> JobStatusResponse:
     """Run a foreground ingestion job for the requested source path."""
 
@@ -39,6 +42,7 @@ async def run_ingestion_job(
 async def get_ingestion_job(
     job_id: str,
     container: ContainerDependency,
+    _: AdminAccessDependency,
 ) -> JobStatusResponse:
     """Return the stored status for an ingestion job."""
 
@@ -52,6 +56,7 @@ async def get_ingestion_job(
 async def search_ingested_chunks(
     request: SearchRequest,
     container: ContainerDependency,
+    _: AdminAccessDependency,
 ) -> list[SearchResult]:
     """Search indexed chunks through the configured dense, sparse, or hybrid retriever."""
 
@@ -61,6 +66,7 @@ async def search_ingested_chunks(
 @router.get("/metrics", response_model=IngestionMetrics)
 async def ingestion_metrics(
     container: ContainerDependency,
+    _: AdminAccessDependency,
 ) -> IngestionMetrics:
     """Return aggregate ingestion counts for the current environment."""
 
