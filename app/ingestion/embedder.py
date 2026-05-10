@@ -110,7 +110,15 @@ class GeminiEmbedder(BaseEmbedder):
                 )
                 response.raise_for_status()
                 payload = response.json()
-                embeddings.append(payload["embeddings"][0]["value"])
+                # The single embedContent API returns {"embedding": {"values": [...]}}
+                if "embedding" in payload:
+                    embeddings.append(payload["embedding"]["values"])
+                elif "embeddings" in payload:
+                    # Fallback for batch-style response if the API behaves differently
+                    embeddings.append(payload["embeddings"][0]["values"])
+                else:
+                    msg = f"Unexpected Gemini API response: {payload}"
+                    raise KeyError(msg)
         return embeddings
 
 
