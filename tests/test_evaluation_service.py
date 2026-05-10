@@ -6,6 +6,7 @@ import pytest
 
 from app.core.config import get_settings
 from app.core.lifecycle import build_container
+from app.evaluation.evaluator import build_evaluator_binding
 from app.evaluation.schemas import EvaluationRunRequest
 
 
@@ -109,3 +110,17 @@ async def test_evaluation_service_applies_ci_thresholds(
 
     assert result.status == "completed"
     assert result.threshold_failures == []
+
+
+def test_build_evaluator_binding_requires_real_provider_credentials() -> None:
+    """The evaluator binding should fail fast when a real provider is selected without a key."""
+
+    settings = get_settings().model_copy(
+        update={
+            "evaluation_evaluator_provider": "openai",
+            "openai_api_key": None,
+        }
+    )
+
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        build_evaluator_binding(settings)

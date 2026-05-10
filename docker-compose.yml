@@ -12,8 +12,11 @@ services:
       ENABLE_PGVECTOR: "true"
       OBJECT_STORAGE_PATH: /app/storage/raw_documents
       SPARSE_INDEX_PATH: /app/storage/sparse_index.json
-      EMBEDDING_PROVIDER: mock
+      EMBEDDING_PROVIDER: local
       EMBEDDING_MODEL: text-embedding-3-small
+      ANSWER_PROVIDER: local
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      EVALUATION_EVALUATOR_PROVIDER: openai
       EMBEDDING_DIMENSION: "32"
       CHUNK_SIZE: "800"
       CHUNK_OVERLAP: "120"

@@ -11,6 +11,7 @@ from typing import Any
 from app.agents.schemas import ResearchQueryRequest
 from app.agents.service import ResearchAgentService
 from app.core.config import Settings
+from app.evaluation.evaluator import build_evaluator_binding, use_evaluator_environment
 from app.evaluation.metrics import aggregate_metrics, compute_case_metrics
 from app.evaluation.schemas import (
     EvaluationCase,
@@ -181,6 +182,15 @@ class EvaluationService:
 
         if not (request.run_ragas or self._settings.evaluation_enable_ragas):
             return RagasEvaluationSummary(status="disabled")
+        try:
+            evaluator_binding = build_evaluator_binding(self._settings)
+        except ValueError as error:
+            return RagasEvaluationSummary(
+                status="failed",
+                message=str(error),
+                evaluator_provider=self._settings.evaluation_evaluator_provider,
+                evaluator_model=self._settings.evaluation_evaluator_model,
+            )
         ragas_rows = [
             {
                 "question": case.question,
@@ -195,63 +205,72 @@ class EvaluationService:
             return RagasEvaluationSummary(
                 status="skipped",
                 message="No evaluation cases provided reference_answer values for RAGAS.",
-                evaluator_provider=self._settings.evaluation_evaluator_provider,
-                evaluator_model=self._settings.evaluation_evaluator_model,
+                evaluator_provider=evaluator_binding.provider,
+                evaluator_model=evaluator_binding.model,
             )
-        return await asyncio.to_thread(self._evaluate_ragas_rows, ragas_rows, request)
+        return await asyncio.to_thread(
+            self._evaluate_ragas_rows,
+            ragas_rows,
+            request,
+            evaluator_binding,
+        )
 
     def _evaluate_ragas_rows(
         self,
         ragas_rows: list[dict[str, Any]],
         request: EvaluationRunRequest,
+        evaluator_binding,
     ) -> RagasEvaluationSummary:
         """Run the optional RAGAS dependency inside a worker thread."""
 
-        try:
-            from datasets import Dataset
-            from ragas import evaluate
-            from ragas.metrics import (
-                answer_relevancy,
-                context_precision,
-                context_recall,
-                faithfulness,
-            )
-        except ImportError:
-            return RagasEvaluationSummary(
-                status="skipped",
-                message=(
-                    "RAGAS dependencies are not installed. Install citebot[evaluation] "
-                    "to enable run-level RAGAS scoring."
-                ),
-                evaluator_provider=self._settings.evaluation_evaluator_provider,
-                evaluator_model=self._settings.evaluation_evaluator_model,
-            )
-        dataset = Dataset.from_dict(
-            {
-                "question": [row["question"] for row in ragas_rows],
-                "answer": [row["answer"] for row in ragas_rows],
-                "contexts": [row["contexts"] for row in ragas_rows],
-                "ground_truth": [row["ground_truth"] for row in ragas_rows],
-            }
-        )
-        try:
-            result = evaluate(
-                dataset,
-                metrics=[
+        with use_evaluator_environment(evaluator_binding):
+            try:
+                from datasets import Dataset
+                from ragas import evaluate
+                from ragas.metrics import (
                     answer_relevancy,
-                    faithfulness,
-                    context_recall,
                     context_precision,
-                ],
-                in_ci=request.threshold_mode == "ci",
+                    context_recall,
+                    faithfulness,
+                )
+            except ImportError:
+                return RagasEvaluationSummary(
+                    status="skipped",
+                    message=(
+                        "RAGAS dependencies are not installed. Install citebot[evaluation] "
+                        "to enable run-level RAGAS scoring."
+                    ),
+                    evaluator_provider=evaluator_binding.provider,
+                    evaluator_model=evaluator_binding.model,
+                )
+            dataset = Dataset.from_dict(
+                {
+                    "question": [row["question"] for row in ragas_rows],
+                    "answer": [row["answer"] for row in ragas_rows],
+                    "contexts": [row["contexts"] for row in ragas_rows],
+                    "ground_truth": [row["ground_truth"] for row in ragas_rows],
+                }
             )
-        except Exception as error:  # pragma: no cover - dependent on optional extras
-            return RagasEvaluationSummary(
-                status="failed",
-                message=str(error),
-                evaluator_provider=self._settings.evaluation_evaluator_provider,
-                evaluator_model=self._settings.evaluation_evaluator_model,
-            )
+            try:
+                result = evaluate(
+                    dataset,
+                    metrics=[
+                        answer_relevancy,
+                        faithfulness,
+                        context_recall,
+                        context_precision,
+                    ],
+                    in_ci=request.threshold_mode == "ci",
+                )
+            except (
+                Exception
+            ) as error:  # pragma: no cover - dependent on optional extras
+                return RagasEvaluationSummary(
+                    status="failed",
+                    message=str(error),
+                    evaluator_provider=evaluator_binding.provider,
+                    evaluator_model=evaluator_binding.model,
+                )
         scores = {
             key: float(value)
             for key, value in dict(result).items()
@@ -260,8 +279,8 @@ class EvaluationService:
         return RagasEvaluationSummary(
             status="completed",
             scores=scores,
-            evaluator_provider=self._settings.evaluation_evaluator_provider,
-            evaluator_model=self._settings.evaluation_evaluator_model,
+            evaluator_provider=evaluator_binding.provider,
+            evaluator_model=evaluator_binding.model,
         )
 
     def _build_case_threshold_failures(self, metrics: dict[str, float]) -> list[str]:

@@ -51,14 +51,15 @@ Open `.env` and set the values relevant to your workflow:
 
 | Variable | Description | Default |
 |---|---|---|
-| `EMBEDDING_PROVIDER` | `mock`, `openai`, or `gemini` | `mock` |
+| `EMBEDDING_PROVIDER` | `local`, `openai`, or `gemini` | `local` |
 | `OPENAI_API_KEY` | Required for OpenAI embeddings and RAGAS | — |
 | `GEMINI_API_KEY` | Required for Gemini embeddings | — |
 | `EMBEDDING_MODEL` | OpenAI embedding model name | `text-embedding-3-small` |
 | `GEMINI_EMBEDDING_MODEL` | Gemini embedding model name | `models/text-embedding-004` |
-| `ANSWER_PROVIDER` | `mock`, `openai`, or `gemini` | `mock` |
+| `ANSWER_PROVIDER` | `local`, `openai`, or `gemini` | `local` |
 | `ANSWER_MODEL` | OpenAI chat model for research answers | `gpt-4o` |
 | `TAVILY_API_KEY` | Optional – enables live web search | — |
+| `EVALUATION_EVALUATOR_PROVIDER` | `openai` or `gemini` for RAGAS evaluation runs | `openai` |
 | `S2_API_KEY` | Optional – raises Semantic Scholar rate limits | — |
 
 ### 3. Start the full stack
@@ -314,7 +315,7 @@ The response includes:
 
 Relevant configuration flags:
 
-- `ANSWER_PROVIDER=mock|openai|gemini`
+- `ANSWER_PROVIDER=local|openai|gemini`
 - `ANSWER_MODEL` and `GEMINI_ANSWER_MODEL`
 - `ALLOW_WEB_SEARCH_DEFAULT`
 - `ALLOW_PYTHON_EXECUTION_DEFAULT`

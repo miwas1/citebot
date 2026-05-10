@@ -25,28 +25,6 @@ class BaseWebSearchTool:
         raise NotImplementedError
 
 
-class DisabledWebSearchTool(BaseWebSearchTool):
-    """Safe default tool that records the web-search policy decision."""
-
-    async def search(
-        self,
-        query: str,
-        trace_id: str,
-    ) -> tuple[list[ResearchContext], ToolCallRecord]:
-        """Return an auditable skipped record when web search is unavailable."""
-
-        now = datetime.now(UTC)
-        return [], ToolCallRecord(
-            tool_name="tavily_web_search",
-            status="skipped",
-            input_summary=query,
-            output_summary="Web search is disabled or unconfigured.",
-            started_at=now,
-            finished_at=now,
-            trace_id=trace_id,
-        )
-
-
 class TavilyWebSearchTool(BaseWebSearchTool):
     """HTTP adapter for Tavily search with timeout and retry handling."""
 
@@ -64,6 +42,14 @@ class TavilyWebSearchTool(BaseWebSearchTool):
 
         started_at = datetime.now(UTC)
         started_clock = monotonic()
+        if not self._settings.tavily_api_key:
+            return self._failure_record(
+                query,
+                trace_id,
+                started_at,
+                started_clock,
+                "TAVILY_API_KEY is not configured.",
+            )
         payload = {
             "query": query,
             "search_depth": self._settings.tavily_search_depth,
@@ -159,11 +145,9 @@ class TavilyWebSearchTool(BaseWebSearchTool):
 
 
 def build_web_search_tool(settings: Settings) -> BaseWebSearchTool:
-    """Build the configured web search adapter or a safe disabled stub."""
+    """Build the Tavily-backed web search adapter."""
 
-    if settings.tavily_api_key:
-        return TavilyWebSearchTool(settings)
-    return DisabledWebSearchTool()
+    return TavilyWebSearchTool(settings)
 
 
 def _normalize_tavily_results(results: object) -> list[ResearchContext]:

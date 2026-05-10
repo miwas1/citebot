@@ -33,7 +33,7 @@ class Settings(BaseSettings):
         default=Path("./storage/sparse_index.json"),
         alias="SPARSE_INDEX_PATH",
     )
-    embedding_provider: str = Field(default="mock", alias="EMBEDDING_PROVIDER")
+    embedding_provider: str = Field(default="local", alias="EMBEDDING_PROVIDER")
     embedding_model: str = Field(
         default="text-embedding-3-small", alias="EMBEDDING_MODEL"
     )
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
         default=8,
         alias="RERANKER_CANDIDATE_COUNT",
     )
-    answer_provider: str = Field(default="mock", alias="ANSWER_PROVIDER")
+    answer_provider: str = Field(default="local", alias="ANSWER_PROVIDER")
     answer_model: str = Field(default="gpt-5", alias="ANSWER_MODEL")
     gemini_answer_model: str = Field(
         default="gemini-3-flash-preview",
@@ -177,7 +177,7 @@ class Settings(BaseSettings):
         alias="EVALUATION_CITATION_SUPPORT_THRESHOLD",
     )
     evaluation_evaluator_provider: str = Field(
-        default="mock",
+        default="openai",
         alias="EVALUATION_EVALUATOR_PROVIDER",
     )
     evaluation_evaluator_model: str = Field(
@@ -220,6 +220,9 @@ class Settings(BaseSettings):
         if self.embedding_dimension <= 0:
             msg = "EMBEDDING_DIMENSION must be positive"
             raise ValueError(msg)
+        if self.embedding_provider not in {"local", "openai", "gemini"}:
+            msg = "EMBEDDING_PROVIDER must be one of local, openai, or gemini"
+            raise ValueError(msg)
         if self.dense_primary_backend not in {"auto", "pgvector", "qdrant", "local"}:
             msg = (
                 "DENSE_PRIMARY_BACKEND must be one of auto, pgvector, qdrant, or local"
@@ -240,8 +243,8 @@ class Settings(BaseSettings):
         if self.reranker_candidate_count <= 0:
             msg = "RERANKER_CANDIDATE_COUNT must be positive"
             raise ValueError(msg)
-        if self.answer_provider not in {"mock", "openai", "gemini"}:
-            msg = "ANSWER_PROVIDER must be one of mock, openai, or gemini"
+        if self.answer_provider not in {"local", "openai", "gemini"}:
+            msg = "ANSWER_PROVIDER must be one of local, openai, or gemini"
             raise ValueError(msg)
         if self.research_top_k <= 0:
             msg = "RESEARCH_TOP_K must be positive"
@@ -312,8 +315,11 @@ class Settings(BaseSettings):
         if not 0 <= self.evaluation_citation_support_threshold <= 1:
             msg = "EVALUATION_CITATION_SUPPORT_THRESHOLD must be between 0 and 1"
             raise ValueError(msg)
-        if self.evaluation_evaluator_provider not in {"mock", "openai", "gemini"}:
-            msg = "EVALUATION_EVALUATOR_PROVIDER must be one of mock, openai, or gemini"
+        if self.evaluation_evaluator_provider not in {"openai", "gemini"}:
+            msg = "EVALUATION_EVALUATOR_PROVIDER must be one of openai or gemini"
+            raise ValueError(msg)
+        if self.allow_web_search_default and not self.tavily_api_key:
+            msg = "TAVILY_API_KEY is required when ALLOW_WEB_SEARCH_DEFAULT=true"
             raise ValueError(msg)
         if not 0 < self.evaluation_phoenix_sample_rate <= 1:
             msg = "EVALUATION_PHOENIX_SAMPLE_RATE must be between 0 and 1"
@@ -331,6 +337,20 @@ class Settings(BaseSettings):
             and not self.gemini_api_key
         ):
             msg = "GEMINI_API_KEY is required when APP_ENV=production and ANSWER_PROVIDER=gemini"
+            raise ValueError(msg)
+        if (
+            self.app_env == "production"
+            and self.evaluation_evaluator_provider == "openai"
+            and not self.openai_api_key
+        ):
+            msg = "OPENAI_API_KEY is required when APP_ENV=production and EVALUATION_EVALUATOR_PROVIDER=openai"
+            raise ValueError(msg)
+        if (
+            self.app_env == "production"
+            and self.evaluation_evaluator_provider == "gemini"
+            and not self.gemini_api_key
+        ):
+            msg = "GEMINI_API_KEY is required when APP_ENV=production and EVALUATION_EVALUATOR_PROVIDER=gemini"
             raise ValueError(msg)
         return self
 

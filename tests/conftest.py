@@ -19,7 +19,8 @@ def configured_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> P
     monkeypatch.setenv("SPARSE_INDEX_PATH", str(sparse_index))
     monkeypatch.setenv("ENABLE_QDRANT", "false")
     monkeypatch.setenv("ENABLE_PGVECTOR", "false")
-    monkeypatch.setenv("EMBEDDING_PROVIDER", "mock")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "local")
+    monkeypatch.setenv("ANSWER_PROVIDER", "local")
     get_settings.cache_clear()
     return tmp_path
 

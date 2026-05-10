@@ -25,7 +25,7 @@ class BaseAnswerGenerator(ABC):
         """Return a structured grounded answer for the supplied request."""
 
 
-class MockAnswerGenerator(BaseAnswerGenerator):
+class LocalAnswerGenerator(BaseAnswerGenerator):
     """Deterministic local answer generator used for tests and offline development."""
 
     async def generate(self, request: ResearchGenerationRequest) -> ResearchAnswer:
@@ -115,14 +115,23 @@ class GeminiAnswerGenerator(BaseAnswerGenerator):
 def build_answer_generator(settings: Settings) -> BaseAnswerGenerator:
     """Build the configured answer generator with safe local fallback behavior."""
 
-    if settings.answer_provider == "openai" and settings.openai_api_key:
+    if settings.answer_provider == "local":
+        return LocalAnswerGenerator()
+    if settings.answer_provider == "openai":
+        if not settings.openai_api_key:
+            msg = "OPENAI_API_KEY is required when ANSWER_PROVIDER=openai"
+            raise ValueError(msg)
         return OpenAIAnswerGenerator(settings.openai_api_key, settings.answer_model)
-    if settings.answer_provider == "gemini" and settings.gemini_api_key:
+    if settings.answer_provider == "gemini":
+        if not settings.gemini_api_key:
+            msg = "GEMINI_API_KEY is required when ANSWER_PROVIDER=gemini"
+            raise ValueError(msg)
         return GeminiAnswerGenerator(
             settings.gemini_api_key,
             settings.gemini_answer_model,
         )
-    return MockAnswerGenerator()
+    msg = "ANSWER_PROVIDER must be one of local, openai, or gemini"
+    raise ValueError(msg)
 
 
 def _parse_answer_json(

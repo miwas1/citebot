@@ -7,20 +7,20 @@ import pytest
 from app.core.config import Settings
 from app.ingestion.embedder import (
     GeminiEmbedder,
-    MockEmbedder,
+    LocalEmbedder,
     OpenAIEmbedder,
     build_embedder,
 )
 
 
-def test_build_embedder_returns_mock_provider_by_default() -> None:
-    """The embedder factory should default to the deterministic mock embedder."""
+def test_build_embedder_returns_local_provider_by_default() -> None:
+    """The embedder factory should default to the deterministic local embedder."""
 
     settings = Settings()
 
     embedder = build_embedder(settings)
 
-    assert isinstance(embedder, MockEmbedder)
+    assert isinstance(embedder, LocalEmbedder)
 
 
 def test_build_embedder_returns_openai_provider() -> None:
@@ -59,10 +59,10 @@ def test_build_embedder_requires_gemini_api_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mock_embedder_rewards_token_overlap() -> None:
-    """The mock embedder should keep overlapping token content closer than unrelated text."""
+async def test_local_embedder_rewards_token_overlap() -> None:
+    """The local embedder should keep overlapping token content closer than unrelated text."""
 
-    embedder = MockEmbedder(dimensions=32)
+    embedder = LocalEmbedder(dimensions=32)
 
     query_embedding, relevant_embedding, unrelated_embedding = (
         await embedder.embed_texts(

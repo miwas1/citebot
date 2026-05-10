@@ -21,7 +21,7 @@ class BaseEmbedder:
         raise NotImplementedError
 
 
-class MockEmbedder(BaseEmbedder):
+class LocalEmbedder(BaseEmbedder):
     """Generate deterministic local embeddings without external network calls."""
 
     def __init__(self, dimensions: int) -> None:
@@ -30,7 +30,7 @@ class MockEmbedder(BaseEmbedder):
         self._dimensions = dimensions
 
     async def embed_texts(self, texts: Sequence[str]) -> list[list[float]]:
-        """Embed each text into a deterministic pseudo-vector for tests and local runs."""
+        """Embed each text into a deterministic pseudo-vector for local runs."""
 
         return [self._embed_single_text(text) for text in texts]
 
@@ -117,6 +117,8 @@ class GeminiEmbedder(BaseEmbedder):
 def build_embedder(settings: Settings) -> BaseEmbedder:
     """Build the configured embedding backend for the current environment."""
 
+    if settings.embedding_provider == "local":
+        return LocalEmbedder(settings.embedding_dimension)
     if settings.embedding_provider == "openai":
         if not settings.openai_api_key:
             msg = "OPENAI_API_KEY is required when EMBEDDING_PROVIDER=openai"
@@ -130,4 +132,5 @@ def build_embedder(settings: Settings) -> BaseEmbedder:
             api_key=settings.gemini_api_key,
             model_name=settings.gemini_embedding_model,
         )
-    return MockEmbedder(settings.embedding_dimension)
+    msg = "EMBEDDING_PROVIDER must be one of local, openai, or gemini"
+    raise ValueError(msg)
