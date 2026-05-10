@@ -31,4 +31,3 @@ __all__ = [
 	"ObservabilityMiddleware",
 	"configure_logging",
 ]
-]

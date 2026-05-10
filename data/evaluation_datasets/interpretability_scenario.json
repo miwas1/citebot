@@ -1,0 +1,209 @@
+{
+  "dataset_name": "transformer-interpretability-scenario",
+  "dataset_version": "1.0.0",
+  "owner": "citebot",
+  "metadata": {
+    "scenario": "Academic Research Assistant",
+    "description": "Compare transformer interpretability techniques published after 2022 and summarize limitations.",
+    "what_is_tested": [
+      "dense + sparse hybrid retrieval",
+      "temporal filtering (published_after=2022-01-01)",
+      "multi-document synthesis",
+      "citation traceability",
+      "hallucination resistance"
+    ],
+    "created_at": "2026-05-09"
+  },
+  "cases": [
+    {
+      "eval_case_id": "interp-001",
+      "question": "Compare transformer interpretability techniques published after 2022 and summarize limitations.",
+      "conversation_history": [],
+      "expected_answer_traits": [
+        "names at least 3 distinct interpretability technique families (mechanistic, probing, causal, saliency, SAE, etc.)",
+        "discusses specific limitations of each technique (faithfulness, scalability, completeness)",
+        "references papers published in 2023 or later",
+        "includes inline citations with source URIs or paper identifiers",
+        "does not hallucinate paper titles or author names",
+        "uses temporal framing language (post-2022, recent work, since 2022)"
+      ],
+      "reference_answer": "Post-2022 transformer interpretability research spans several technique families. Mechanistic interpretability (Conmy et al. 2023; Wang et al. 2022) uses activation patching and circuit analysis to identify computational sub-graphs responsible for specific behaviours, but circuits found in small models often do not cleanly transfer to large-scale models. Sparse autoencoders (Bricken et al. 2023; Cunningham et al. 2023) decompose residual-stream activations into interpretable feature directions and have shown promise for polysemanticity reduction, though the quality of recovered features varies with training regime and dictionary size. Probing classifiers remain popular for analysing internal representations but suffer from incomplete faithfulness – a probe's accuracy does not guarantee the model actually uses that information causally. Gradient-based attribution methods (Integrated Gradients, SHAP) continue to be applied but are sensitive to baseline choice and can produce contradictory explanations for the same model and input. Causal abstraction (Geiger et al. 2023) provides formal guarantees by aligning neural representations with symbolic causal models, but the search for valid alignments does not scale easily beyond toy tasks. Limitations shared across approaches include: reliance on local explanations that may not generalise, lack of ground-truth interpretability benchmarks, and the fundamental challenge that human-understandable concepts may not correspond to monosemantic units in the model.",
+      "expected_source_uris": [
+        "https://arxiv.org/abs/2304.01338",
+        "https://arxiv.org/abs/2211.00593",
+        "https://arxiv.org/abs/2309.01550",
+        "https://arxiv.org/abs/2207.09768",
+        "https://arxiv.org/abs/2202.05262"
+      ],
+      "expected_citation_rules": [
+        "every factual claim must be grounded in a retrieved source",
+        "citation URIs must be real arXiv or DOI links present in the ingested corpus",
+        "paper titles in the answer must match the ingested document titles exactly"
+      ],
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "tags": [
+        "interpretability",
+        "transformer",
+        "mechanistic",
+        "temporal-filter",
+        "multi-doc-synthesis",
+        "hallucination-resistance"
+      ],
+      "top_k": 15,
+      "allow_web_search": false,
+      "allow_python_execution": false,
+      "freshness_required": true
+    },
+    {
+      "eval_case_id": "interp-002",
+      "question": "What are sparse autoencoders and how are they used for mechanistic interpretability of language models?",
+      "conversation_history": [],
+      "expected_answer_traits": [
+        "defines sparse autoencoders (SAE) and dictionary learning objective",
+        "explains how SAEs decompose residual stream or MLP activations",
+        "mentions Anthropic and EleutherAI / academic work (2023-2024)",
+        "discusses polysemanticity and monosemanticity",
+        "includes citations to relevant papers"
+      ],
+      "reference_answer": null,
+      "expected_source_uris": [
+        "https://arxiv.org/abs/2309.01550",
+        "https://arxiv.org/abs/2211.00593"
+      ],
+      "expected_citation_rules": [
+        "must cite at least one paper from 2023 or later",
+        "must not fabricate author names"
+      ],
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "tags": [
+        "sparse-autoencoder",
+        "interpretability",
+        "polysemanticity",
+        "2023"
+      ],
+      "top_k": 10,
+      "allow_web_search": false,
+      "allow_python_execution": false,
+      "freshness_required": true
+    },
+    {
+      "eval_case_id": "interp-003",
+      "question": "What is activation patching and what has it revealed about factual recall in GPT-style models?",
+      "conversation_history": [],
+      "expected_answer_traits": [
+        "explains activation patching / causal tracing methodology",
+        "references ROME or related causal-tracing work",
+        "describes mid-layer MLP role in factual storage",
+        "includes limitations of causal tracing approach"
+      ],
+      "reference_answer": null,
+      "expected_source_uris": [
+        "https://arxiv.org/abs/2301.04213",
+        "https://arxiv.org/abs/2202.05262"
+      ],
+      "expected_citation_rules": [
+        "must cite at least one causal tracing paper"
+      ],
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "tags": [
+        "activation-patching",
+        "causal-tracing",
+        "factual-recall",
+        "GPT"
+      ],
+      "top_k": 10,
+      "allow_web_search": false,
+      "allow_python_execution": false,
+      "freshness_required": false
+    },
+    {
+      "eval_case_id": "interp-004",
+      "question": "Summarize the limitations of probing classifiers as an interpretability technique for transformer models.",
+      "conversation_history": [],
+      "expected_answer_traits": [
+        "explains what probing classifiers are",
+        "mentions faithfulness vs accuracy distinction",
+        "discusses confounded representations",
+        "cites at least one paper critiquing probing"
+      ],
+      "reference_answer": null,
+      "expected_source_uris": [],
+      "expected_citation_rules": [
+        "must include at least one citation"
+      ],
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "tags": [
+        "probing",
+        "limitations",
+        "faithfulness",
+        "interpretability"
+      ],
+      "top_k": 8,
+      "allow_web_search": false,
+      "allow_python_execution": false,
+      "freshness_required": false
+    },
+    {
+      "eval_case_id": "interp-005",
+      "question": "Find the most recent papers (2024 or later) on circuit discovery in transformer models.",
+      "conversation_history": [],
+      "expected_answer_traits": [
+        "returns papers dated 2024 or later",
+        "focuses on circuit discovery methodology",
+        "does not return papers dated before 2024",
+        "includes publication dates in citations"
+      ],
+      "reference_answer": null,
+      "expected_source_uris": [],
+      "expected_citation_rules": [
+        "all cited papers must have publication year >= 2024"
+      ],
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "tags": [
+        "circuit-discovery",
+        "temporal-filter",
+        "2024",
+        "freshness"
+      ],
+      "top_k": 10,
+      "allow_web_search": true,
+      "allow_python_execution": false,
+      "freshness_required": true
+    },
+    {
+      "eval_case_id": "interp-006",
+      "question": "Are there papers comparing mechanistic interpretability to post-hoc explainability methods like SHAP or LIME on the same benchmarks?",
+      "conversation_history": [],
+      "expected_answer_traits": [
+        "distinguishes mechanistic interpretability from post-hoc methods",
+        "mentions SHAP or LIME or Integrated Gradients explicitly",
+        "acknowledges if comparison studies are rare or absent",
+        "does not fabricate comparison studies"
+      ],
+      "reference_answer": null,
+      "expected_source_uris": [],
+      "expected_citation_rules": [
+        "must not fabricate paper titles or comparisons",
+        "should honestly acknowledge data gaps"
+      ],
+      "expected_document_ids": [],
+      "expected_chunk_ids": [],
+      "tags": [
+        "mechanistic-interpretability",
+        "SHAP",
+        "LIME",
+        "comparison",
+        "hallucination-resistance"
+      ],
+      "top_k": 10,
+      "allow_web_search": false,
+      "allow_python_execution": false,
+      "freshness_required": false
+    }
+  ]
+}

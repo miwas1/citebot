@@ -1,0 +1,711 @@
+{
+  "info": {
+    "name": "CiteBot API",
+    "description": "Complete collection for the CiteBot research, ingestion, evaluation, and health endpoints. Set the `base_url`, `research_api_key`, and `admin_api_key` collection variables before running.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "citebot-api-v1"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000/api/v1",
+      "type": "string",
+      "description": "Root URL including the API prefix."
+    },
+    {
+      "key": "research_api_key",
+      "value": "research-secret-key",
+      "type": "string",
+      "description": "API key sent as X-Api-Key on research routes (maps to RESEARCH_API_KEY env var)."
+    },
+    {
+      "key": "admin_api_key",
+      "value": "admin-secret-key",
+      "type": "string",
+      "description": "API key sent as X-Api-Key on admin routes (maps to ADMIN_API_KEY env var)."
+    },
+    {
+      "key": "job_id",
+      "value": "",
+      "type": "string",
+      "description": "Populated automatically by the 'Run Ingestion Job' test script."
+    },
+    {
+      "key": "run_id",
+      "value": "",
+      "type": "string",
+      "description": "Populated automatically by the 'Run Evaluation' test script."
+    },
+    {
+      "key": "session_id",
+      "value": "",
+      "type": "string",
+      "description": "Populated automatically by the 'Research Query' test script for multi-turn testing."
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "description": "Liveness, readiness, version, and metrics probes. No auth required except /metrics.",
+      "item": [
+        {
+          "name": "Liveness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Basic liveness probe. Returns {\"status\": \"ok\"} when the process is running."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"status\": \"ok\"}"
+            }
+          ]
+        },
+        {
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ready",
+              "host": ["{{base_url}}"],
+              "path": ["ready"]
+            },
+            "description": "Dependency-aware readiness probe. Returns 200 when all backing services are healthy, 503 otherwise."
+          },
+          "response": [
+            {
+              "name": "200 Ready",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"status\": \"ready\", \"checks\": {\"database\": \"ok\", \"vector_store\": \"ok\"}}"
+            },
+            {
+              "name": "503 Not Ready",
+              "status": "Service Unavailable",
+              "code": 503,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"status\": \"degraded\", \"checks\": {\"database\": \"error\"}}"
+            }
+          ]
+        },
+        {
+          "name": "Version",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/version",
+              "host": ["{{base_url}}"],
+              "path": ["version"]
+            },
+            "description": "Returns the running application name and version string."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"name\": \"CiteBot\", \"version\": \"0.1.0\"}"
+            }
+          ]
+        },
+        {
+          "name": "Metrics Snapshot",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Api-Key",
+                "value": "{{admin_api_key}}",
+                "description": "Admin API key required."
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/metrics",
+              "host": ["{{base_url}}"],
+              "path": ["metrics"]
+            },
+            "description": "Returns in-process metrics counters. Requires admin API key."
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"requests_total\": 42, \"requests_4xx\": 2, \"requests_5xx\": 0, \"rate_limited_total\": 0}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"detail\": \"Missing or invalid API key for admin access.\"}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Research",
+      "description": "LangGraph-backed question answering with grounded citations. All routes require X-Api-Key matching RESEARCH_API_KEY.",
+      "item": [
+        {
+          "name": "Research Query (blocking)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.session_id) {",
+                  "        pm.collectionVariables.set('session_id', body.session_id);",
+                  "        console.log('session_id captured:', body.session_id);",
+                  "    }",
+                  "    pm.test('Response has answer', () => pm.expect(body).to.have.property('answer'));",
+                  "    pm.test('Response has citations', () => pm.expect(body.answer).to.have.property('citations'));",
+                  "    pm.test('Verification verdict present', () => pm.expect(body.verification).to.have.property('overall_verdict'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{research_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What are the long-term cognitive effects of chronic sleep deprivation in adults?\",\n  \"top_k\": 5,\n  \"allow_web_search\": false,\n  \"allow_python_execution\": false,\n  \"freshness_required\": false,\n  \"include_debug_trace\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/research/query",
+              "host": ["{{base_url}}"],
+              "path": ["research", "query"]
+            },
+            "description": "Runs the full research agent pipeline and waits for the complete grounded response. The session_id from the response is stored as a collection variable for follow-up queries."
+          },
+          "response": [
+            {
+              "name": "200 OK — grounded answer",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"session_id\": \"sess_01jvxxxxxxxx\",\n  \"trace_id\": \"trc_01jvxxxxxxxx\",\n  \"answer\": {\n    \"direct_answer\": \"Chronic sleep deprivation is associated with impaired working memory, reduced executive function, and increased risk of neurodegenerative conditions.\",\n    \"supporting_evidence\": [\n      \"Walker (2017) demonstrated that 6 hours of sleep for two weeks produces cognitive deficits equivalent to two full nights of total sleep loss.\"\n    ],\n    \"citations\": [\n      {\n        \"citation_id\": \"cit_01\",\n        \"chunk_id\": \"chk_abc123\",\n        \"document_id\": \"doc_xyz789\",\n        \"title\": \"Why We Sleep\",\n        \"source_uri\": \"file:///data/why_we_sleep.pdf\",\n        \"source_type\": \"internal\",\n        \"support_span\": \"6 hours of sleep for two weeks produces...\",\n        \"quoted_support\": \"subjects who slept 6 hours per night for 14 days showed reaction-time deficits equivalent to two full nights of total deprivation\"\n      }\n    ],\n    \"limitations\": \"Results based on documents ingested as of last index run.\",\n    \"follow_up_suggestion\": \"How does REM sleep specifically affect memory consolidation?\"\n  },\n  \"verification\": {\n    \"overall_verdict\": \"supported\",\n    \"claims\": [],\n    \"unsupported_citation_ids\": []\n  },\n  \"memory\": {\n    \"summary\": \"\",\n    \"recent_turns\": [],\n    \"citation_graph\": {},\n    \"unresolved_constraints\": []\n  },\n  \"tool_calls\": [],\n  \"token_usage\": {\"prompt_tokens\": 812, \"completion_tokens\": 247, \"total_tokens\": 1059},\n  \"state_transitions\": [\"plan\", \"retrieve\", \"generate\", \"verify\"],\n  \"retrieved_contexts\": [],\n  \"error\": null\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "status": "Unauthorized",
+              "code": 401,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"detail\": \"Missing or invalid API key for research access.\"}"
+            }
+          ]
+        },
+        {
+          "name": "Research Query — multi-turn (with session)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{research_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"session_id\": \"{{session_id}}\",\n  \"query\": \"How does REM sleep specifically affect memory consolidation?\",\n  \"top_k\": 5,\n  \"allow_web_search\": false,\n  \"allow_python_execution\": false,\n  \"freshness_required\": false,\n  \"include_debug_trace\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/research/query",
+              "host": ["{{base_url}}"],
+              "path": ["research", "query"]
+            },
+            "description": "Continues a prior conversation by forwarding the session_id captured from the first query. Run 'Research Query (blocking)' first to populate the session_id variable."
+          },
+          "response": []
+        },
+        {
+          "name": "Research Query — with web search",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{research_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"What did the 2025 WHO guidelines say about screen time before bed?\",\n  \"top_k\": 5,\n  \"allow_web_search\": true,\n  \"allow_python_execution\": false,\n  \"freshness_required\": true,\n  \"include_debug_trace\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/research/query",
+              "host": ["{{base_url}}"],
+              "path": ["research", "query"]
+            },
+            "description": "Enables web search and freshness mode to retrieve up-to-date information not present in the index."
+          },
+          "response": []
+        },
+        {
+          "name": "Research Query — with Python execution",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{research_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Calculate the mean and standard deviation of the sleep study sample sizes.\",\n  \"top_k\": 5,\n  \"allow_web_search\": false,\n  \"allow_python_execution\": true,\n  \"freshness_required\": false,\n  \"analysis_code\": \"import statistics\\ndata = [24, 36, 48, 60, 72, 84]\\nresult = {'mean': statistics.mean(data), 'stdev': round(statistics.stdev(data), 2)}\\nprint(result)\",\n  \"analysis_inputs\": {\"dataset\": \"sleep_study_sample_sizes\"},\n  \"include_debug_trace\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/research/query",
+              "host": ["{{base_url}}"],
+              "path": ["research", "query"]
+            },
+            "description": "Enables the Python sandbox tool so the agent can execute analysis code before generating its answer."
+          },
+          "response": []
+        },
+        {
+          "name": "Research Query — stream (NDJSON)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Streaming response received', () => {",
+                  "    pm.expect(pm.response.code).to.equal(200);",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/x-ndjson');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{research_api_key}}" },
+              { "key": "Accept", "value": "application/x-ndjson" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Summarise the current evidence on intermittent fasting and cardiovascular health.\",\n  \"top_k\": 5,\n  \"allow_web_search\": false,\n  \"allow_python_execution\": false,\n  \"freshness_required\": false,\n  \"include_debug_trace\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/research/query/stream",
+              "host": ["{{base_url}}"],
+              "path": ["research", "query", "stream"]
+            },
+            "description": "Returns two NDJSON lines: a 'start' event with session/trace IDs, then a 'complete' event containing the full ResearchResponse payload."
+          },
+          "response": [
+            {
+              "name": "200 NDJSON stream",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/x-ndjson" }],
+              "body": "{\"event\": \"start\", \"data\": {\"session_id\": \"sess_01jvxxxxxxxx\", \"trace_id\": \"trc_01jvxxxxxxxx\"}}\n{\"event\": \"complete\", \"data\": {\"session_id\": \"sess_01jvxxxxxxxx\", \"trace_id\": \"trc_01jvxxxxxxxx\", \"answer\": {\"direct_answer\": \"Intermittent fasting has been shown to...\", \"citations\": []}, \"verification\": {\"overall_verdict\": \"supported\"}, \"error\": null}}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin — Ingestion",
+      "description": "Corpus loading, job status, search, and ingestion metrics. All routes require X-Api-Key matching ADMIN_API_KEY.",
+      "item": [
+        {
+          "name": "Run Ingestion Job",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.job_id) {",
+                  "        pm.collectionVariables.set('job_id', body.job_id);",
+                  "        console.log('job_id captured:', body.job_id);",
+                  "    }",
+                  "    pm.test('Job status present', () => pm.expect(body).to.have.property('status'));",
+                  "    pm.test('Job has source_path', () => pm.expect(body).to.have.property('source_path'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_path\": \"./data/sample_corpus\",\n  \"force_reindex\": false,\n  \"embedding_version\": \"v1\",\n  \"index_version\": \"v1\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/ingestion/jobs",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "ingestion", "jobs"]
+            },
+            "description": "Triggers a foreground ingestion job against the given local corpus path. job_id is captured automatically for use in the status poll below."
+          },
+          "response": [
+            {
+              "name": "200 OK — job started",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"job_id\": \"a1b2c3d4e5f6\",\n  \"source_path\": \"./data/sample_corpus\",\n  \"status\": \"completed\",\n  \"force_reindex\": false,\n  \"embedding_version\": \"v1\",\n  \"index_version\": \"v1\",\n  \"started_at\": \"2026-05-09T10:00:00Z\",\n  \"completed_at\": \"2026-05-09T10:00:45Z\",\n  \"error_message\": null,\n  \"documents_seen\": 12,\n  \"documents_indexed\": 10,\n  \"documents_skipped\": 2,\n  \"chunks_written\": 84\n}"
+            }
+          ]
+        },
+        {
+          "name": "Run Ingestion Job — force reindex",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_path\": \"./data/sample_corpus\",\n  \"force_reindex\": true,\n  \"embedding_version\": \"v2\",\n  \"index_version\": \"v2\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/ingestion/jobs",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "ingestion", "jobs"]
+            },
+            "description": "Forces a full re-embed and re-index of all corpus documents regardless of content-hash state."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Ingestion Job Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/ingestion/jobs/{{job_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "ingestion", "jobs", "{{job_id}}"]
+            },
+            "description": "Polls the persisted status for the job whose ID was captured from 'Run Ingestion Job'."
+          },
+          "response": [
+            {
+              "name": "200 OK — job status",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"job_id\": \"a1b2c3d4e5f6\",\n  \"source_path\": \"./data/sample_corpus\",\n  \"status\": \"completed\",\n  \"force_reindex\": false,\n  \"embedding_version\": \"v1\",\n  \"index_version\": \"v1\",\n  \"started_at\": \"2026-05-09T10:00:00Z\",\n  \"completed_at\": \"2026-05-09T10:00:45Z\",\n  \"error_message\": null,\n  \"documents_seen\": 12,\n  \"documents_indexed\": 10,\n  \"documents_skipped\": 2,\n  \"chunks_written\": 84\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"detail\": \"Job not found\"}"
+            }
+          ]
+        },
+        {
+          "name": "Search Ingested Chunks — hybrid",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Response is array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "if (pm.response.code === 200 && pm.response.json().length > 0) {",
+                  "    const first = pm.response.json()[0];",
+                  "    pm.test('Result has chunk_id', () => pm.expect(first).to.have.property('chunk_id'));",
+                  "    pm.test('Result has score', () => pm.expect(first).to.have.property('score'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"sleep deprivation cognitive performance working memory\",\n  \"top_k\": 5,\n  \"strategy\": \"hybrid\",\n  \"index_target\": \"auto\",\n  \"filters\": {\n    \"document_ids\": [],\n    \"source_uris\": [],\n    \"access_policies\": [],\n    \"embedding_version\": null,\n    \"index_version\": null\n  },\n  \"include_explain\": false,\n  \"enable_reranking\": null\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/ingestion/search",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "ingestion", "search"]
+            },
+            "description": "Runs hybrid (dense + sparse) retrieval over the indexed corpus and returns ranked chunks."
+          },
+          "response": [
+            {
+              "name": "200 OK — results",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "[\n  {\n    \"chunk_id\": \"chk_abc123\",\n    \"document_id\": \"doc_xyz789\",\n    \"title\": \"Why We Sleep\",\n    \"source_uri\": \"file:///data/why_we_sleep.pdf\",\n    \"location_marker\": \"p.42\",\n    \"score\": 0.912,\n    \"text\": \"Subjects who slept 6 hours per night for 14 days showed reaction-time deficits equivalent to two full nights of total deprivation.\",\n    \"dense_score\": 0.87,\n    \"sparse_score\": 0.61,\n    \"fused_score\": 0.912,\n    \"rerank_score\": 0.94,\n    \"source_backend\": \"sparse\",\n    \"metadata\": {\"page\": 42, \"section\": \"Chapter 3\"},\n    \"explain\": null\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "Search Ingested Chunks — sparse only",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"intermittent fasting cardiovascular LDL\",\n  \"top_k\": 10,\n  \"strategy\": \"sparse\",\n  \"index_target\": \"auto\",\n  \"filters\": {\n    \"document_ids\": [],\n    \"source_uris\": [],\n    \"access_policies\": [\"internal\"],\n    \"embedding_version\": \"v1\",\n    \"index_version\": \"v1\"\n  },\n  \"include_explain\": true,\n  \"enable_reranking\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/ingestion/search",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "ingestion", "search"]
+            },
+            "description": "BM25-only (sparse) retrieval with explain scores and access-policy filtering."
+          },
+          "response": []
+        },
+        {
+          "name": "Search Ingested Chunks — dense only",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"neural plasticity sleep slow-wave\",\n  \"top_k\": 8,\n  \"strategy\": \"dense\",\n  \"index_target\": \"auto\",\n  \"filters\": {\n    \"document_ids\": [],\n    \"source_uris\": [],\n    \"access_policies\": [],\n    \"embedding_version\": null,\n    \"index_version\": null\n  },\n  \"include_explain\": false,\n  \"enable_reranking\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/ingestion/search",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "ingestion", "search"]
+            },
+            "description": "Embedding-only (dense) vector search with reranking enabled."
+          },
+          "response": []
+        },
+        {
+          "name": "Ingestion Metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Has documents count', () => pm.expect(pm.response.json()).to.have.property('documents'));",
+                  "pm.test('Has chunks count', () => pm.expect(pm.response.json()).to.have.property('chunks'));",
+                  "pm.test('Has jobs count', () => pm.expect(pm.response.json()).to.have.property('jobs'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/ingestion/metrics",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "ingestion", "metrics"]
+            },
+            "description": "Returns aggregate document, chunk, and job counts for the current environment."
+          },
+          "response": [
+            {
+              "name": "200 OK — metrics",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"documents\": 12, \"chunks\": 84, \"jobs\": 3}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin — Evaluation",
+      "description": "Evaluation run execution and retrieval for quality monitoring. All routes require X-Api-Key matching ADMIN_API_KEY.",
+      "item": [
+        {
+          "name": "Run Evaluation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.run_id) {",
+                  "        pm.collectionVariables.set('run_id', body.run_id);",
+                  "        console.log('run_id captured:', body.run_id);",
+                  "    }",
+                  "    pm.test('Run has status', () => pm.expect(body).to.have.property('status'));",
+                  "    pm.test('Run has dataset_name', () => pm.expect(body).to.have.property('dataset_name'));",
+                  "    pm.test('Run is completed or failed', () => {",
+                  "        pm.expect(['completed', 'failed']).to.include(body.status);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_path\": \"./data/sample_corpus\",\n  \"force_reindex\": false,\n  \"embedding_version\": \"default\",\n  \"index_version\": \"default\",\n  \"run_ragas\": false,\n  \"threshold_mode\": \"report\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/evaluation/runs",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "evaluation", "runs"]
+            },
+            "description": "Executes an evaluation run against the research pipeline using the default evaluation dataset. The run_id is captured automatically for status retrieval."
+          },
+          "response": [
+            {
+              "name": "200 OK — evaluation completed",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"run_id\": \"9f3e2a1b4c7d8e0f\",\n  \"status\": \"completed\",\n  \"dataset_name\": \"retrieval_benchmark\",\n  \"dataset_version\": \"1.0.0\",\n  \"case_results\": [\n    {\n      \"eval_case_id\": \"ec_001\",\n      \"session_id\": \"sess_01jvxxxxxxxx\",\n      \"trace_id\": \"trc_01jvxxxxxxxx\",\n      \"question\": \"What are the effects of sleep deprivation?\",\n      \"direct_answer\": \"Sleep deprivation impairs...\",\n      \"retrieved_chunk_ids\": [\"chk_abc123\"],\n      \"retrieved_document_ids\": [\"doc_xyz789\"],\n      \"retrieved_source_uris\": [\"file:///data/why_we_sleep.pdf\"],\n      \"citation_chunk_ids\": [\"chk_abc123\"],\n      \"metrics\": {\"recall_at_5\": 1.0, \"precision_at_5\": 0.8, \"ndcg_at_5\": 0.92},\n      \"threshold_failures\": [],\n      \"passed\": true,\n      \"error\": null\n    }\n  ],\n  \"ragas\": {\"status\": \"disabled\", \"scores\": {}, \"message\": null},\n  \"traces\": {\"status\": \"disabled\", \"endpoint\": null, \"trace_count\": 0},\n  \"aggregate_metrics\": {\"recall_at_5\": 1.0, \"precision_at_5\": 0.8},\n  \"threshold_failures\": [],\n  \"ci_passed\": true,\n  \"artifact_path\": \"./artifacts/evaluations/9f3e2a1b4c7d8e0f.json\",\n  \"started_at\": \"2026-05-09T10:05:00Z\",\n  \"completed_at\": \"2026-05-09T10:05:38Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Run Evaluation — with RAGAS",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_path\": \"./data/sample_corpus\",\n  \"force_reindex\": false,\n  \"embedding_version\": \"default\",\n  \"index_version\": \"default\",\n  \"run_ragas\": true,\n  \"threshold_mode\": \"ci\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/evaluation/runs",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "evaluation", "runs"]
+            },
+            "description": "Runs evaluation with RAGAS LLM-as-judge scoring enabled and sets CI threshold mode (failures cause a non-zero exit code)."
+          },
+          "response": []
+        },
+        {
+          "name": "Run Evaluation — custom dataset path",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dataset_path\": \"./data/retrieval_benchmark_queries.json\",\n  \"source_path\": null,\n  \"force_reindex\": false,\n  \"embedding_version\": \"v1\",\n  \"index_version\": \"v1\",\n  \"run_ragas\": false,\n  \"threshold_mode\": \"report\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/evaluation/runs",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "evaluation", "runs"]
+            },
+            "description": "Runs evaluation against a specific dataset file rather than the default benchmark."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Evaluation Run",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200 or 404', () => pm.expect([200, 404]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "    pm.test('Run has run_id', () => pm.expect(pm.response.json()).to.have.property('run_id'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Api-Key", "value": "{{admin_api_key}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/evaluation/runs/{{run_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "evaluation", "runs", "{{run_id}}"]
+            },
+            "description": "Fetches a persisted evaluation run artifact by the run_id captured from 'Run Evaluation'."
+          },
+          "response": [
+            {
+              "name": "404 Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\"detail\": \"Evaluation run not found\"}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
