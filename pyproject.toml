@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "citebot"
 version = "0.1.0"
-description = "Production foundation for the CiteBot agentic RAG assistant."
+description = "Offline privacy-first document RAG assistant with structured OCR and local inference."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
@@ -25,6 +25,7 @@ dependencies = [
 
 [project.scripts]
 citebot-ingest = "app.ingestion.cli:main"
+citebot-worker = "app.ingestion.worker:main"
 citebot-retrieval-harness = "app.evaluation.retrieval_harness:main"
 citebot-eval = "app.evaluation.cli:main"
 
@@ -38,6 +39,10 @@ dev = [
 evaluation = [
   "datasets>=3.1.0,<4.0.0",
   "ragas>=0.2.10,<1.0.0"
+]
+ocr = [
+  "paddleocr==3.0.3",
+  "paddlepaddle==3.0.0"
 ]
 
 [tool.setuptools.packages.find]

@@ -8,7 +8,7 @@ CORPUS_MERGED      ?= $(CORPUS_OUTPUT_DIR)/interpretability_merged.jsonl
 EVAL_DATASET       ?= data/evaluation_datasets/interpretability_scenario.json
 EVAL_OUTPUT        ?= artifacts/evaluations/interpretability_scenario_result.json
 
-.PHONY: dev-up dev-logs dev-down dev-reset test lint ingest-sample search-sample benchmark-retrieval integration-retrieval eval-smoke eval-ci \
+.PHONY: dev-up dev-logs dev-down dev-reset local-setup test lint ingest-sample search-sample benchmark-retrieval integration-retrieval eval-smoke eval-ci models-provision models-verify \
         corpus-download corpus-download-large corpus-download-full \
         ingest-interpretability eval-interpretability eval-interpretability-ragas \
         corpus-stats
@@ -16,8 +16,12 @@ EVAL_OUTPUT        ?= artifacts/evaluations/interpretability_scenario_result.jso
 dev-up:
 	docker compose up --build -d
 
+## local-setup: one-time model download, image build/pull, and offline stack startup
+local-setup: models-provision models-verify
+	docker compose up --build -d
+
 dev-logs:
-	docker compose logs -f api nginx
+	docker compose logs -f api document-worker
 
 dev-down:
 	docker compose down
@@ -30,6 +34,13 @@ test:
 
 lint:
 	$(PYTHON) -m ruff check .
+
+models-verify:
+	$(PYTHON) scripts/verify_model_manifest.py
+
+## models-provision: download local inference/OCR artifacts and generate their lock manifest
+models-provision:
+	$(PYTHON) scripts/provision_local_models.py
 
 ingest-sample:
 	$(PYTHON) -m app.ingestion.cli ingest data/sample_corpus

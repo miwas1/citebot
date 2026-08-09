@@ -42,6 +42,14 @@ class TavilyWebSearchTool(BaseWebSearchTool):
 
         started_at = datetime.now(UTC)
         started_clock = monotonic()
+        if self._settings.runtime_mode == "offline":
+            return self._failure_record(
+                query,
+                trace_id,
+                started_at,
+                started_clock,
+                "Web search is disabled in RUNTIME_MODE=offline.",
+            )
         if not self._settings.tavily_api_key:
             return self._failure_record(
                 query,
@@ -147,6 +155,8 @@ class TavilyWebSearchTool(BaseWebSearchTool):
 def build_web_search_tool(settings: Settings) -> BaseWebSearchTool:
     """Build the Tavily-backed web search adapter."""
 
+    if settings.runtime_mode == "offline" and settings.allow_web_search_default:
+        raise ValueError("Web search is disabled in RUNTIME_MODE=offline")
     return TavilyWebSearchTool(settings)
 
 

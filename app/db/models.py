@@ -58,6 +58,10 @@ class ChunkRecord(Base):
     section: Mapped[str | None] = mapped_column(String(255), nullable=True)
     page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     location_marker: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    element_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    bbox_refs: Mapped[list[list[float]]] = mapped_column(JSON, default=list)
+    extraction_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    min_confidence: Mapped[float | None] = mapped_column(nullable=True)
     embedding_model: Mapped[str] = mapped_column(String(255))
     embedding_version: Mapped[str] = mapped_column(String(64))
     index_version: Mapped[str] = mapped_column(String(64))
@@ -89,6 +93,18 @@ class IngestionJobRecord(Base):
     documents_indexed: Mapped[int] = mapped_column(Integer, default=0)
     documents_skipped: Mapped[int] = mapped_column(Integer, default=0)
     chunks_written: Mapped[int] = mapped_column(Integer, default=0)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    stage: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    progress_current: Mapped[int] = mapped_column(Integer, default=0)
+    progress_total: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ResearchSessionRecordModel(Base):

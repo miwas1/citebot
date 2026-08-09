@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
@@ -6,7 +6,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     build-essential \
+    libgomp1 \
     libpq-dev \
+    tesseract-ocr \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -21,7 +23,7 @@ COPY docs ./docs
 COPY data ./data
 
 # Install dependencies using uv
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra ocr
 
 ENV PATH="/app/.venv/bin:$PATH"
 

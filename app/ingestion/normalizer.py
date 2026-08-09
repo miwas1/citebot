@@ -18,6 +18,9 @@ class DocumentNormalizer:
 
         normalized_text = self._normalize_text(document.text)
         content_hash = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
+        structured = self._align_structured(document.structured, normalized_text)
+        if structured is not None:
+            structured.document_id = str(uuid5(NAMESPACE_URL, document.source_uri))
         return CanonicalDocument(
             document_id=str(uuid5(NAMESPACE_URL, document.source_uri)),
             source_uri=document.source_uri,
@@ -29,6 +32,7 @@ class DocumentNormalizer:
             content_hash=content_hash,
             access_policy=document.access_policy,
             metadata=document.metadata,
+            structured=structured,
         )
 
     def _normalize_text(self, text: str) -> str:
@@ -42,3 +46,27 @@ class DocumentNormalizer:
         ]
         non_empty_lines = [line for line in cleaned_lines if line]
         return "\n\n".join(non_empty_lines).strip()
+
+    def _align_structured(
+        self,
+        structured,
+        normalized_text: str,
+    ):
+        """Normalize element text and recompute offsets against canonical text."""
+
+        if structured is None:
+            return None
+        cursor = 0
+        pages = structured.model_copy(deep=True)
+        for page in pages.pages:
+            for element in page.elements:
+                element.text = self._normalize_text(element.text)
+                if not element.text:
+                    continue
+                start = normalized_text.find(element.text, cursor)
+                if start < 0:
+                    continue
+                element.char_start = start
+                element.char_end = start + len(element.text)
+                cursor = element.char_end
+        return pages

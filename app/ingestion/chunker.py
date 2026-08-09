@@ -42,6 +42,9 @@ class SlidingWindowChunker:
             if not chunk_text:
                 continue
             section = self._find_section_heading(document.text, char_start)
+            page, element_ids, bbox_refs, extraction_method, min_confidence = (
+                self._find_provenance(document, char_start, char_end)
+            )
             chunk_id = str(
                 uuid5(
                     NAMESPACE_URL,
@@ -59,8 +62,16 @@ class SlidingWindowChunker:
                     char_start=char_start,
                     char_end=char_end,
                     section=section,
-                    page=None,
-                    location_marker=f"chars {char_start}-{char_end}",
+                    page=page,
+                    location_marker=(
+                        f"page {page}, chars {char_start}-{char_end}"
+                        if page is not None
+                        else f"chars {char_start}-{char_end}"
+                    ),
+                    element_ids=element_ids,
+                    bbox_refs=bbox_refs,
+                    extraction_method=extraction_method,
+                    min_confidence=min_confidence,
                     embedding_model=embedding_model,
                     embedding_version=embedding_version,
                     index_version=index_version,
@@ -69,6 +80,44 @@ class SlidingWindowChunker:
             if start_index + self._chunk_size >= len(matches):
                 break
         return chunks
+
+    def _find_provenance(
+        self,
+        document: CanonicalDocument,
+        char_start: int,
+        char_end: int,
+    ) -> tuple[
+        int | None,
+        list[str],
+        list[tuple[float, float, float, float]],
+        str | None,
+        float | None,
+    ]:
+        """Attach structured page/element provenance to a flattened chunk."""
+
+        if document.structured is None:
+            return None, [], [], None, None
+        page_number: int | None = None
+        element_ids: list[str] = []
+        bbox_refs: list[tuple[float, float, float, float]] = []
+        methods: set[str] = set()
+        confidences: list[float] = []
+        for page in document.structured.pages:
+            for element in page.elements:
+                if element.char_start is None or element.char_end is None:
+                    continue
+                if element.char_end <= char_start or element.char_start >= char_end:
+                    continue
+                page_number = page.page_number if page_number is None else page_number
+                element_ids.append(element.element_id)
+                if element.bbox is not None:
+                    bbox_refs.append(element.bbox)
+                methods.add(element.source_engine)
+                if element.confidence is not None:
+                    confidences.append(element.confidence)
+        method = "+".join(sorted(methods)) if methods else None
+        minimum = min(confidences) if confidences else None
+        return page_number, element_ids, bbox_refs, method, minimum
 
     def _find_section_heading(self, text: str, char_offset: int) -> str | None:
         """Return the most recent Markdown heading that precedes a chunk."""

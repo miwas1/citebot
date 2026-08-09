@@ -27,6 +27,10 @@ class IndexedChunkRecord:
     index_version: str
     section: str | None
     page: int | None
+    element_ids: list[str]
+    bbox_refs: list[list[float]]
+    extraction_method: str | None
+    min_confidence: float | None
     document_metadata: dict[str, Any]
 
 
@@ -89,5 +93,9 @@ class RetrievalRepository:
             index_version=chunk.index_version,
             section=chunk.section,
             page=chunk.page,
+            element_ids=list(chunk.element_ids or []),
+            bbox_refs=list(chunk.bbox_refs or []),
+            extraction_method=chunk.extraction_method,
+            min_confidence=chunk.min_confidence,
             document_metadata=dict(document.metadata_json or {}),
         )

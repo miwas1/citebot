@@ -12,6 +12,7 @@ from app.agents.service import ResearchAgentService
 from app.agents.session_store import ResearchSessionStore
 from app.core.config import Settings, get_settings
 from app.core.health import HealthService
+from app.core.model_manifest import verify_model_manifest
 from app.db.session import DatabaseSessionManager
 from app.evaluation.service import EvaluationService
 from app.ingestion.chunker import SlidingWindowChunker
@@ -46,6 +47,8 @@ class ServiceContainer:
     async def initialize(self) -> None:
         """Initialize storage, tables, and external writer schemas."""
 
+        if self.settings.runtime_mode == "offline":
+            verify_model_manifest(self.settings.model_manifest_path)
         await self.session_manager.initialize()
         await self.ingestion_service.initialize()
 
@@ -58,9 +61,12 @@ class ServiceContainer:
 def build_container(settings: Settings) -> ServiceContainer:
     """Construct the service graph for the current process."""
 
-    session_manager = DatabaseSessionManager(settings.database_url)
+    session_manager = DatabaseSessionManager(
+        settings.database_url,
+        sqlite_busy_timeout_ms=settings.sqlite_busy_timeout_ms,
+    )
     repository = IngestionRepository(session_manager)
-    loader = LocalCorpusLoader()
+    loader = LocalCorpusLoader(settings)
     normalizer = DocumentNormalizer()
     chunker = SlidingWindowChunker(settings.chunk_size, settings.chunk_overlap)
     embedder = build_embedder(settings)

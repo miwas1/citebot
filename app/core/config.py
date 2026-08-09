@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,12 +19,25 @@ class Settings(BaseSettings):
     app_version: str = Field(default="0.1.0", alias="APP_VERSION")
     app_env: str = Field(default="development", alias="APP_ENV")
     api_prefix: str = Field(default="/api/v1", alias="API_PREFIX")
+    # Development remains backwards-compatible when instantiated directly; the
+    # shipped .env/Compose profiles set the production runtime to offline.
+    runtime_mode: str = Field(default="development", alias="RUNTIME_MODE")
+    api_bind_host: str = Field(default="127.0.0.1", alias="API_BIND_HOST")
+    local_service_hosts: str = Field(
+        default="embedding,llm,qdrant,ocr-worker,localhost,127.0.0.1,::1",
+        alias="LOCAL_SERVICE_HOSTS",
+    )
     database_url: str = Field(
         default="sqlite+aiosqlite:///./citebot.db", alias="DATABASE_URL"
     )
+    sqlite_busy_timeout_ms: int = Field(
+        default=5000, alias="SQLITE_BUSY_TIMEOUT_MS"
+    )
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
-    qdrant_collection: str = Field(default="citebot_chunks", alias="QDRANT_COLLECTION")
-    enable_qdrant: bool = Field(default=False, alias="ENABLE_QDRANT")
+    qdrant_collection: str = Field(
+        default="citebot_chunks_qwen3_v2", alias="QDRANT_COLLECTION"
+    )
+    enable_qdrant: bool = Field(default=True, alias="ENABLE_QDRANT")
     enable_pgvector: bool = Field(default=False, alias="ENABLE_PGVECTOR")
     object_storage_path: Path = Field(
         default=Path("./storage/raw_documents"),
@@ -33,11 +47,53 @@ class Settings(BaseSettings):
         default=Path("./storage/sparse_index.json"),
         alias="SPARSE_INDEX_PATH",
     )
-    embedding_provider: str = Field(default="local", alias="EMBEDDING_PROVIDER")
-    embedding_model: str = Field(
-        default="text-embedding-3-small", alias="EMBEDDING_MODEL"
+    structured_document_path: Path = Field(
+        default=Path("./storage/structured_documents"),
+        alias="STRUCTURED_DOCUMENT_PATH",
     )
-    embedding_dimension: int = Field(default=32, alias="EMBEDDING_DIMENSION")
+    vector_backend: str = Field(default="qdrant", alias="VECTOR_BACKEND")
+    document_parser: str = Field(default="auto", alias="DOCUMENT_PARSER")
+    ocr_provider: str = Field(default="paddleocr", alias="OCR_PROVIDER")
+    ocr_model_path: Path = Field(
+        default=Path("./models/paddleocr"), alias="OCR_MODEL_PATH"
+    )
+    ocr_detection_model_name: str = Field(
+        default="PP-OCRv5_mobile_det", alias="OCR_DETECTION_MODEL_NAME"
+    )
+    ocr_recognition_model_name: str = Field(
+        default="PP-OCRv5_mobile_rec", alias="OCR_RECOGNITION_MODEL_NAME"
+    )
+    ocr_fallback_provider: str = Field(
+        default="tesseract", alias="OCR_FALLBACK_PROVIDER"
+    )
+    ocr_languages: str = Field(default="en", alias="OCR_LANGUAGES")
+    ocr_min_native_text_coverage: float = Field(
+        default=0.60, alias="OCR_MIN_NATIVE_TEXT_COVERAGE"
+    )
+    ocr_min_confidence: float = Field(default=0.75, alias="OCR_MIN_CONFIDENCE")
+    ocr_max_pages: int = Field(default=500, alias="OCR_MAX_PAGES")
+    ocr_concurrency: int = Field(default=1, alias="OCR_CONCURRENCY")
+    max_input_bytes: int = Field(default=50 * 1024 * 1024, alias="MAX_INPUT_BYTES")
+    ingestion_execution_mode: str = Field(
+        default="foreground", alias="INGESTION_EXECUTION_MODE"
+    )
+    ingestion_worker_id: str = Field(default="citebot-worker", alias="INGESTION_WORKER_ID")
+    queue_lease_seconds: int = Field(default=300, alias="QUEUE_LEASE_SECONDS")
+    queue_poll_seconds: float = Field(default=1.0, alias="QUEUE_POLL_SECONDS")
+    ingestion_max_attempts: int = Field(default=3, alias="INGESTION_MAX_ATTEMPTS")
+    embedding_provider: str = Field(default="local-http", alias="EMBEDDING_PROVIDER")
+    embedding_model: str = Field(
+        default="Qwen/Qwen3-Embedding-0.6B", alias="EMBEDDING_MODEL"
+    )
+    embedding_base_url: str = Field(
+        default="http://embedding:8081", alias="EMBEDDING_BASE_URL"
+    )
+    embedding_timeout_seconds: float = Field(
+        default=30.0, alias="EMBEDDING_TIMEOUT_SECONDS"
+    )
+    embedding_batch_size: int = Field(default=8, alias="EMBEDDING_BATCH_SIZE")
+    embedding_version: str = Field(default="qwen3-0.6b-v1", alias="EMBEDDING_VERSION")
+    embedding_dimension: int = Field(default=1024, alias="EMBEDDING_DIMENSION")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     gemini_embedding_model: str = Field(
@@ -67,8 +123,19 @@ class Settings(BaseSettings):
         default=8,
         alias="RERANKER_CANDIDATE_COUNT",
     )
-    answer_provider: str = Field(default="local", alias="ANSWER_PROVIDER")
-    answer_model: str = Field(default="gpt-5", alias="ANSWER_MODEL")
+    answer_provider: str = Field(default="llama-cpp", alias="ANSWER_PROVIDER")
+    answer_model: str = Field(
+        default="phi-4-mini-instruct-q4", alias="ANSWER_MODEL"
+    )
+    llm_base_url: str = Field(default="http://llm:8082/v1", alias="LLM_BASE_URL")
+    llm_timeout_seconds: float = Field(default=60.0, alias="LLM_TIMEOUT_SECONDS")
+    llm_context_tokens: int = Field(default=8192, alias="LLM_CONTEXT_TOKENS")
+    llm_generation_concurrency: int = Field(
+        default=1, alias="LLM_GENERATION_CONCURRENCY"
+    )
+    model_manifest_path: Path = Field(
+        default=Path("./models/manifest.lock.json"), alias="MODEL_MANIFEST_PATH"
+    )
     gemini_answer_model: str = Field(
         default="gemini-3-flash-preview",
         alias="GEMINI_ANSWER_MODEL",
@@ -177,11 +244,11 @@ class Settings(BaseSettings):
         alias="EVALUATION_CITATION_SUPPORT_THRESHOLD",
     )
     evaluation_evaluator_provider: str = Field(
-        default="openai",
+        default="local",
         alias="EVALUATION_EVALUATOR_PROVIDER",
     )
     evaluation_evaluator_model: str = Field(
-        default="gpt-5",
+        default="phi-4-mini-instruct-q4",
         alias="EVALUATION_EVALUATOR_MODEL",
     )
     evaluation_phoenix_endpoint: str | None = Field(
@@ -196,6 +263,66 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_requirements(self) -> "Settings":
         """Fail fast when production-only settings are incomplete."""
+
+        if self.runtime_mode not in {"offline", "test", "development"}:
+            msg = "RUNTIME_MODE must be one of offline, test, or development"
+            raise ValueError(msg)
+        if self.api_bind_host not in {"127.0.0.1", "localhost", "::1"}:
+            if self.runtime_mode == "offline":
+                msg = "API_BIND_HOST must be loopback in RUNTIME_MODE=offline"
+                raise ValueError(msg)
+        if self.vector_backend not in {"qdrant", "local", "pgvector"}:
+            msg = "VECTOR_BACKEND must be one of qdrant, local, or pgvector"
+            raise ValueError(msg)
+        if self.document_parser not in {"auto", "native", "ocr"}:
+            msg = "DOCUMENT_PARSER must be one of auto, native, or ocr"
+            raise ValueError(msg)
+        if self.ocr_provider not in {"paddleocr", "none"}:
+            msg = "OCR_PROVIDER must be one of paddleocr or none"
+            raise ValueError(msg)
+        if self.ocr_fallback_provider not in {"tesseract", "none"}:
+            msg = "OCR_FALLBACK_PROVIDER must be one of tesseract or none"
+            raise ValueError(msg)
+        if not 0 <= self.ocr_min_native_text_coverage <= 1:
+            msg = "OCR_MIN_NATIVE_TEXT_COVERAGE must be between 0 and 1"
+            raise ValueError(msg)
+        if not 0 <= self.ocr_min_confidence <= 1:
+            msg = "OCR_MIN_CONFIDENCE must be between 0 and 1"
+            raise ValueError(msg)
+        if self.ocr_max_pages <= 0 or self.ocr_concurrency <= 0:
+            msg = "OCR_MAX_PAGES and OCR_CONCURRENCY must be positive"
+            raise ValueError(msg)
+        if self.max_input_bytes <= 0:
+            msg = "MAX_INPUT_BYTES must be positive"
+            raise ValueError(msg)
+        if self.ingestion_execution_mode not in {"foreground", "queued"}:
+            msg = "INGESTION_EXECUTION_MODE must be foreground or queued"
+            raise ValueError(msg)
+        if self.queue_lease_seconds <= 0 or self.queue_poll_seconds <= 0:
+            msg = "QUEUE_LEASE_SECONDS and QUEUE_POLL_SECONDS must be positive"
+            raise ValueError(msg)
+        if self.ingestion_max_attempts <= 0:
+            msg = "INGESTION_MAX_ATTEMPTS must be positive"
+            raise ValueError(msg)
+        if self.embedding_batch_size <= 0 or self.embedding_timeout_seconds <= 0:
+            msg = (
+                "EMBEDDING_BATCH_SIZE must be positive and "
+                "EMBEDDING_TIMEOUT_SECONDS must be positive"
+            )
+            raise ValueError(msg)
+        if self.llm_timeout_seconds <= 0 or self.llm_context_tokens <= 0:
+            msg = "LLM_TIMEOUT_SECONDS and LLM_CONTEXT_TOKENS must be positive"
+            raise ValueError(msg)
+        if self.llm_generation_concurrency <= 0:
+            msg = "LLM_GENERATION_CONCURRENCY must be positive"
+            raise ValueError(msg)
+        if self.runtime_mode == "offline":
+            for name, value in {
+                "QDRANT_URL": self.qdrant_url,
+                "EMBEDDING_BASE_URL": self.embedding_base_url,
+                "LLM_BASE_URL": self.llm_base_url,
+            }.items():
+                self._validate_local_url(name, value)
 
         if (
             self.app_env == "production"
@@ -214,14 +341,23 @@ class Settings(BaseSettings):
         if self.chunk_overlap >= self.chunk_size:
             msg = "CHUNK_OVERLAP must be smaller than CHUNK_SIZE"
             raise ValueError(msg)
+        if self.sqlite_busy_timeout_ms <= 0:
+            msg = "SQLITE_BUSY_TIMEOUT_MS must be positive"
+            raise ValueError(msg)
         if self.enable_pgvector and not self.database_url.startswith("postgresql+"):
             msg = "ENABLE_PGVECTOR requires a PostgreSQL DATABASE_URL"
             raise ValueError(msg)
         if self.embedding_dimension <= 0:
             msg = "EMBEDDING_DIMENSION must be positive"
             raise ValueError(msg)
-        if self.embedding_provider not in {"local", "openai", "gemini"}:
-            msg = "EMBEDDING_PROVIDER must be one of local, openai, or gemini"
+        if self.embedding_provider not in {
+            "local-http",
+            "local",
+            "test",
+            "openai",
+            "gemini",
+        }:
+            msg = "EMBEDDING_PROVIDER must be one of local-http, local, test, openai, or gemini"
             raise ValueError(msg)
         if self.dense_primary_backend not in {"auto", "pgvector", "qdrant", "local"}:
             msg = (
@@ -243,8 +379,14 @@ class Settings(BaseSettings):
         if self.reranker_candidate_count <= 0:
             msg = "RERANKER_CANDIDATE_COUNT must be positive"
             raise ValueError(msg)
-        if self.answer_provider not in {"local", "openai", "gemini"}:
-            msg = "ANSWER_PROVIDER must be one of local, openai, or gemini"
+        if self.answer_provider not in {
+            "llama-cpp",
+            "local",
+            "test",
+            "openai",
+            "gemini",
+        }:
+            msg = "ANSWER_PROVIDER must be one of llama-cpp, local, test, openai, or gemini"
             raise ValueError(msg)
         if self.research_top_k <= 0:
             msg = "RESEARCH_TOP_K must be positive"
@@ -315,8 +457,12 @@ class Settings(BaseSettings):
         if not 0 <= self.evaluation_citation_support_threshold <= 1:
             msg = "EVALUATION_CITATION_SUPPORT_THRESHOLD must be between 0 and 1"
             raise ValueError(msg)
-        if self.evaluation_evaluator_provider not in {"openai", "gemini"}:
-            msg = "EVALUATION_EVALUATOR_PROVIDER must be one of openai or gemini"
+        if self.evaluation_evaluator_provider not in {
+            "local",
+            "openai",
+            "gemini",
+        }:
+            msg = "EVALUATION_EVALUATOR_PROVIDER must be one of local, openai, or gemini"
             raise ValueError(msg)
         if self.allow_web_search_default and not self.tavily_api_key:
             msg = "TAVILY_API_KEY is required when ALLOW_WEB_SEARCH_DEFAULT=true"
@@ -358,6 +504,19 @@ class Settings(BaseSettings):
                 "EVALUATION_EVALUATOR_PROVIDER=gemini"
             )
             raise ValueError(msg)
+        if self.runtime_mode == "offline":
+            if self.embedding_provider in {"openai", "gemini"}:
+                msg = "Hosted embedding providers are disabled in offline production mode"
+                raise ValueError(msg)
+            if self.answer_provider in {"openai", "gemini"}:
+                msg = "Hosted answer providers are disabled in offline production mode"
+                raise ValueError(msg)
+            if self.evaluation_evaluator_provider in {"openai", "gemini"}:
+                msg = "Hosted evaluation providers are disabled in offline production mode"
+                raise ValueError(msg)
+            if self.allow_web_search_default:
+                msg = "ALLOW_WEB_SEARCH_DEFAULT must be false in offline production mode"
+                raise ValueError(msg)
         if self.app_env == "production" and not self.research_api_key:
             msg = "RESEARCH_API_KEY is required when APP_ENV=production"
             raise ValueError(msg)
@@ -365,6 +524,22 @@ class Settings(BaseSettings):
             msg = "ADMIN_API_KEY is required when APP_ENV=production"
             raise ValueError(msg)
         return self
+
+    def _validate_local_url(self, name: str, value: str) -> None:
+        """Reject public URLs when the offline runtime is selected."""
+
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError(f"{name} must be an absolute HTTP(S) URL")
+        hosts = {
+            host.strip().lower()
+            for host in self.local_service_hosts.split(",")
+            if host.strip()
+        }
+        if parsed.hostname.lower() not in hosts:
+            raise ValueError(
+                f"{name} host {parsed.hostname!r} is not allowed by LOCAL_SERVICE_HOSTS"
+            )
 
 
 @lru_cache(maxsize=1)

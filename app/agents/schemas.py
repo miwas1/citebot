@@ -70,6 +70,9 @@ class Citation(BaseModel):
     title: str
     source_uri: str
     location_marker: str | None = None
+    page: int | None = None
+    element_ids: list[str] = Field(default_factory=list)
+    bbox_refs: list[list[float]] = Field(default_factory=list)
     source_type: Literal["internal", "web", "analysis"] = "internal"
     support_span: str
     quoted_support: str

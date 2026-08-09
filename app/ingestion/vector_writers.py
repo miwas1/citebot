@@ -143,6 +143,18 @@ class QdrantWriter:
                 f"{self._base_url}/collections/{self._collection_name}"
             )
             if response.status_code == 200:
+                payload = response.json().get("result", {})
+                configured = (
+                    payload.get("config", {})
+                    .get("params", {})
+                    .get("vectors", {})
+                )
+                configured_size = configured.get("size")
+                if configured_size is not None and int(configured_size) != vector_size:
+                    raise ValueError(
+                        f"Qdrant collection {self._collection_name} has dimension "
+                        f"{configured_size}, expected {vector_size}; use a new version"
+                    )
                 return
             create_response = await client.put(
                 f"{self._base_url}/collections/{self._collection_name}",
@@ -178,6 +190,10 @@ class QdrantWriter:
                         "embedding_model": chunk.embedding_model,
                         "embedding_version": chunk.embedding_version,
                         "index_version": chunk.index_version,
+                        "element_ids": chunk.element_ids,
+                        "bbox_refs": [list(box) for box in chunk.bbox_refs],
+                        "extraction_method": chunk.extraction_method,
+                        "min_confidence": chunk.min_confidence,
                     },
                 }
             )

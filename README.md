@@ -1,6 +1,6 @@
 # CiteBot
 
-CiteBot is a production-oriented research assistant scaffold for agentic retrieval-augmented generation workflows. It runs locally with deterministic providers and SQLite, or with the optional PostgreSQL, pgvector, Qdrant, and hosted-model backends.
+CiteBot is a privacy-first document RAG system for local, offline operation. The default deployment keeps documents, OCR, embeddings, generation, vectors, sessions, and evaluation on one machine; hosted providers and web search are compatibility-only development paths and are rejected by offline production mode.
 
 ---
 
@@ -49,37 +49,50 @@ pip install -e .[dev,evaluation]
 cp .env.example .env
 ```
 
-The example file is intentionally configured for a no-credentials local run. Open `.env` only if you want to enable hosted models, web search, or the Docker-backed services:
+The example file is configured for an offline local run. Copy it before starting:
 
 | Variable | Description | Default |
 |---|---|---|
-| `EMBEDDING_PROVIDER` | `local`, `openai`, or `gemini` | `local` |
-| `OPENAI_API_KEY` | Required for OpenAI embeddings and RAGAS | — |
-| `GEMINI_API_KEY` | Required for Gemini embeddings | — |
-| `EMBEDDING_MODEL` | OpenAI embedding model name | `text-embedding-3-small` |
-| `GEMINI_EMBEDDING_MODEL` | Gemini embedding model name | `models/text-embedding-004` |
-| `ANSWER_PROVIDER` | `local`, `openai`, or `gemini` | `local` |
-| `ANSWER_MODEL` | OpenAI chat model for research answers | `gpt-5` |
-| `TAVILY_API_KEY` | Optional – enables live web search | — |
-| `EVALUATION_EVALUATOR_PROVIDER` | `openai` or `gemini` for RAGAS evaluation runs | `openai` |
+| `RUNTIME_MODE` | `offline` fail-closed runtime policy | `offline` |
+| `EMBEDDING_PROVIDER` | `local-http` (real local service) or `local`/`test` (deterministic tests) | `local-http` |
+| `EMBEDDING_MODEL` | Local embedding artifact | `Qwen/Qwen3-Embedding-0.6B` |
+| `EMBEDDING_BASE_URL` | Private embedding service URL | `http://embedding:8081` |
+| `EMBEDDING_DIMENSION` | Must match the local model artifact | `1024` |
+| `ANSWER_PROVIDER` | `llama-cpp` or `local`/`test` (deterministic tests) | `llama-cpp` |
+| `ANSWER_MODEL` | Local quantized model artifact | `phi-4-mini-instruct-q4` |
+| `LLM_BASE_URL` | Private llama.cpp-compatible URL | `http://llm:8082/v1` |
+| `OCR_PROVIDER` | `paddleocr` or `none` | `paddleocr` |
+| `OCR_FALLBACK_PROVIDER` | `tesseract` or `none` | `tesseract` |
+| `EVALUATION_EVALUATOR_PROVIDER` | `local` by default | `local` |
+| `OPENAI_API_KEY` / `GEMINI_API_KEY` | Compatibility-only credentials; not valid in offline production | — |
+| `TAVILY_API_KEY` | Compatibility-only web search credential; disabled offline | — |
 | `RESEARCH_API_KEY` | Optional in development; protects research routes when set | — |
 | `ADMIN_API_KEY` | Optional in development; protects admin routes when set | — |
 | `S2_API_KEY` | Optional – raises Semantic Scholar rate limits | — |
 
-### 3. Start the full stack
+### 3. Provision model artifacts and start the offline stack
+
+Run the one-time bootstrap command below. It downloads the default Qwen embedding
+model, Phi-4-mini GGUF, and PaddleOCR detection/recognition models to the local
+artifact directory, records their exact upstream commits and checksums in
+`manifest.lock.json`, builds/pulls the required containers, and starts the stack.
+Set the `*_REPOSITORY`, `*_REVISION`, `LLM_MODEL_FILENAME`, or
+`MODEL_ARTIFACT_ROOT` values in `.env` before running it to override a default.
+The runtime never downloads models after this command succeeds.
 
 ```bash
-make dev-up
+make local-setup
 ```
 
 Services started:
 
-- FastAPI on `http://localhost:8000` (nginx is also available on `http://localhost`)
-- PostgreSQL with pgvector on `localhost:5432`
-- Qdrant on `localhost:6333`
-- Redis on `localhost:6379`
+- FastAPI on `http://127.0.0.1:8000`
+- local embedding service on the private Compose network
+- local llama.cpp server on the private Compose network
+- Qdrant on the private Compose network
+- SQLite, raw/structured documents, and indexes under `./storage`
 
-The API container uses local deterministic embeddings and answer generation, so Docker startup does not require an API key. Dozzle is opt-in with `docker compose --profile observability up`.
+Qdrant, model services, and worker ports are not published to the host. Dozzle is opt-in with `docker compose --profile observability up` and remains loopback-bound.
 
 ### 4. Run without Docker (SQLite / local vector index)
 
@@ -87,7 +100,7 @@ The API container uses local deterministic embeddings and answer generation, so 
 uvicorn app.main:app --reload
 ```
 
-The app defaults to SQLite + a local FAISS-style index when the Docker services are not present. Useful for fast iteration on a laptop.
+For fast tests without model services, set `EMBEDDING_PROVIDER=local`, `ANSWER_PROVIDER=local`, `ENABLE_QDRANT=false`, and `INGESTION_EXECUTION_MODE=foreground`. These deterministic providers are not production inference.
 
 ---
 
@@ -98,7 +111,7 @@ make dev-up          # start all services
 make ingest-sample   # ingest the bundled sample corpus
 make search-sample   # run a test search
 make test            # run the test suite
-make dev-logs        # follow API and nginx logs
+make dev-logs        # follow API and document-worker logs
 make dev-down        # stop containers and preserve volumes
 make dev-reset       # stop containers and delete volumes
 ```
@@ -296,7 +309,7 @@ The admin search endpoint accepts dense, sparse, and hybrid retrieval requests a
 
 ## Research API
 
-The repository now includes a LangGraph-backed research workflow for grounded answer generation, citation verification, optional Tavily web enrichment, and optional sandboxed Python analysis.
+The repository includes a LangGraph-backed research workflow for grounded local answer generation and citation verification. Web enrichment remains disabled in offline mode; the Python sandbox is separately opt-in.
 
 - `POST /api/v1/research/query`
 
@@ -323,8 +336,9 @@ The response includes:
 
 Relevant configuration flags:
 
-- `ANSWER_PROVIDER=local|openai|gemini`
-- `ANSWER_MODEL` and `GEMINI_ANSWER_MODEL`
+- `ANSWER_PROVIDER=llama-cpp|local|test`
+- `ANSWER_MODEL` and `LLM_BASE_URL`
+- `RUNTIME_MODE=offline`
 - `ALLOW_WEB_SEARCH_DEFAULT`
 - `ALLOW_PYTHON_EXECUTION_DEFAULT`
 - `TAVILY_API_KEY`
@@ -401,7 +415,7 @@ make benchmark-retrieval        # retrieval latency benchmark
 
 ## Real Backend Benchmarking
 
-Use the retrieval harness to compare live `pgvector` and `qdrant` responses through the API.
+Use the retrieval harness to benchmark the default local Qdrant path through the API. The pgvector comparison remains an optional compatibility profile.
 
 ```bash
 make integration-retrieval
@@ -412,8 +426,8 @@ The harness will:
 
 - ensure the Docker Compose stack is up,
 - wait for `/api/v1/ready`,
-- ingest the sample corpus into PostgreSQL, pgvector, Qdrant, and the sparse index,
-- run dense retrieval requests against `pgvector` and `qdrant`,
+- ingest the sample corpus into Qdrant and the sparse index,
+- run dense retrieval requests against the local Qdrant path,
 - write JSON reports under `artifacts/retrieval-benchmarks/`.
 
 You can also run it directly:

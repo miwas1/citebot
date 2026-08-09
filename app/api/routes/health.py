@@ -42,7 +42,16 @@ async def readiness(
 async def version(settings: SettingsDependency) -> dict[str, str]:
     """Return the deployed application version."""
 
-    return {"name": settings.app_name, "version": settings.app_version}
+    return {
+        "name": settings.app_name,
+        "version": settings.app_version,
+        "runtime_mode": settings.runtime_mode,
+        "embedding_model": settings.embedding_model,
+        "embedding_version": settings.embedding_version,
+        "answer_model": settings.answer_model,
+        "qdrant_collection": settings.qdrant_collection,
+        "model_manifest_path": str(settings.model_manifest_path),
+    }
 
 
 @router.get("/metrics")

@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
         command_parser.add_argument(
             "--compose-services",
             nargs="*",
-            default=["postgres", "qdrant", "redis", "api"],
+            default=["qdrant", "embedding", "llm", "api"],
         )
         command_parser.add_argument(
             "--artifact-dir",
@@ -196,6 +196,16 @@ def ingest_sample_corpus(
     )
     response.raise_for_status()
     payload = response.json()
+    if payload.get("status") in {"queued", "running"}:
+        job_id = payload.get("job_id")
+        deadline = time.monotonic() + 300.0
+        while job_id and time.monotonic() < deadline:
+            time.sleep(1.0)
+            status_response = client.get(f"/admin/ingestion/jobs/{job_id}")
+            status_response.raise_for_status()
+            payload = status_response.json()
+            if payload.get("status") in {"completed", "failed", "quarantined"}:
+                break
     if payload.get("status") != "completed":
         msg = "Sample corpus ingestion did not complete successfully"
         raise RuntimeError(msg)

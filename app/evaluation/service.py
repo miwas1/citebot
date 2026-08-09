@@ -191,6 +191,16 @@ class EvaluationService:
                 evaluator_provider=self._settings.evaluation_evaluator_provider,
                 evaluator_model=self._settings.evaluation_evaluator_model,
             )
+        if evaluator_binding.provider == "local":
+            return RagasEvaluationSummary(
+                status="skipped",
+                message=(
+                    "RAGAS requires a configured evaluator model; local metrics "
+                    "remain enabled."
+                ),
+                evaluator_provider=evaluator_binding.provider,
+                evaluator_model=evaluator_binding.model,
+            )
         ragas_rows = [
             {
                 "question": case.question,

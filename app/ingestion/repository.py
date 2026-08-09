@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 
 from app.db.models import ChunkRecord, DocumentRecord, IngestionJobRecord
 from app.db.session import DatabaseSessionManager
@@ -32,6 +32,8 @@ class IngestionRepository:
         force_reindex: bool,
         embedding_version: str,
         index_version: str,
+        status: str = "running",
+        max_attempts: int = 3,
     ) -> None:
         """Persist a newly started ingestion job."""
 
@@ -40,10 +42,111 @@ class IngestionRepository:
                 IngestionJobRecord(
                     job_id=job_id,
                     source_path=source_path,
-                    status="running",
+                    status=status,
                     force_reindex=force_reindex,
                     embedding_version=embedding_version,
                     index_version=index_version,
+                    max_attempts=max_attempts,
+                )
+            )
+
+    async def claim_next_job(
+        self,
+        worker_id: str,
+        lease_seconds: int,
+    ) -> JobStatusResponse | None:
+        """Atomically claim the oldest queued job for a worker lease."""
+
+        now = datetime.now(tz=UTC)
+        lease_expires = now + timedelta(seconds=lease_seconds)
+        async with self._session_manager.session() as session:
+            record = await session.scalar(
+                select(IngestionJobRecord)
+                .where(IngestionJobRecord.status == "queued")
+                .order_by(IngestionJobRecord.started_at)
+                .limit(1)
+            )
+            if record is None:
+                return None
+            result = await session.execute(
+                update(IngestionJobRecord)
+                .where(
+                    IngestionJobRecord.job_id == record.job_id,
+                    IngestionJobRecord.status == "queued",
+                )
+                .values(
+                    status="running",
+                    lease_owner=worker_id,
+                    lease_expires_at=lease_expires,
+                    heartbeat_at=now,
+                    attempt_count=IngestionJobRecord.attempt_count + 1,
+                    stage="claimed",
+                )
+            )
+            if result.rowcount != 1:
+                return None
+            await session.flush()
+            await session.refresh(record)
+            return self._to_job_response(record)
+
+    async def recover_stale_jobs(self) -> int:
+        """Return expired running jobs to the queue or quarantine exhausted jobs."""
+
+        now = datetime.now(tz=UTC)
+        async with self._session_manager.session() as session:
+            exhausted = await session.execute(
+                update(IngestionJobRecord)
+                .where(
+                    IngestionJobRecord.status == "running",
+                    IngestionJobRecord.lease_expires_at.is_not(None),
+                    IngestionJobRecord.lease_expires_at < now,
+                    IngestionJobRecord.attempt_count
+                    >= IngestionJobRecord.max_attempts,
+                )
+                .values(
+                    status="quarantined",
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    heartbeat_at=None,
+                    stage="quarantined",
+                    completed_at=now,
+                    error_message="Worker lease expired after max attempts",
+                )
+            )
+            result = await session.execute(
+                update(IngestionJobRecord)
+                .where(
+                    IngestionJobRecord.status == "running",
+                    IngestionJobRecord.lease_expires_at.is_not(None),
+                    IngestionJobRecord.lease_expires_at < now,
+                    IngestionJobRecord.attempt_count
+                    < IngestionJobRecord.max_attempts,
+                )
+                .values(
+                    status="queued",
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    heartbeat_at=None,
+                    stage="requeued",
+                )
+            )
+            return int((result.rowcount or 0) + (exhausted.rowcount or 0))
+
+    async def heartbeat(self, job_id: str, worker_id: str, lease_seconds: int) -> None:
+        """Extend a worker lease while a job is processing."""
+
+        now = datetime.now(tz=UTC)
+        async with self._session_manager.session() as session:
+            await session.execute(
+                update(IngestionJobRecord)
+                .where(
+                    IngestionJobRecord.job_id == job_id,
+                    IngestionJobRecord.lease_owner == worker_id,
+                    IngestionJobRecord.status == "running",
+                )
+                .values(
+                    lease_expires_at=now + timedelta(seconds=lease_seconds),
+                    heartbeat_at=now,
                 )
             )
 
@@ -67,6 +170,9 @@ class IngestionRepository:
             record.documents_indexed = documents_indexed
             record.documents_skipped = documents_skipped
             record.chunks_written = chunks_written
+            record.stage = "completed"
+            record.lease_owner = None
+            record.lease_expires_at = None
 
     async def fail_job(
         self,
@@ -90,6 +196,9 @@ class IngestionRepository:
             record.documents_skipped = documents_skipped
             record.chunks_written = chunks_written
             record.error_message = error_message
+            record.stage = "failed"
+            record.lease_owner = None
+            record.lease_expires_at = None
 
     async def get_job(self, job_id: str) -> JobStatusResponse | None:
         """Return a single ingestion job if it exists."""
@@ -167,6 +276,10 @@ class IngestionRepository:
                         section=chunk.section,
                         page=chunk.page,
                         location_marker=chunk.location_marker,
+                        element_ids=chunk.element_ids,
+                        bbox_refs=[list(box) for box in chunk.bbox_refs],
+                        extraction_method=chunk.extraction_method,
+                        min_confidence=chunk.min_confidence,
                         embedding_model=chunk.embedding_model,
                         embedding_version=chunk.embedding_version,
                         index_version=chunk.index_version,
@@ -207,4 +320,10 @@ class IngestionRepository:
             documents_indexed=record.documents_indexed,
             documents_skipped=record.documents_skipped,
             chunks_written=record.chunks_written,
+            attempt_count=record.attempt_count,
+            max_attempts=record.max_attempts,
+            stage=record.stage,
+            progress_current=record.progress_current,
+            progress_total=record.progress_total,
+            lease_expires_at=record.lease_expires_at,
         )

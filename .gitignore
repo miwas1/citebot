@@ -6,6 +6,10 @@ __pycache__/
 *.pyc
 citebot.db
 storage/
+models/*
+!models/README.md
+!models/manifest.lock.json
+!models/manifest.lock.example.json
 dist/
 build/
 artifacts/

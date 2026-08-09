@@ -15,7 +15,7 @@ from app.core.config import Settings
 class EvaluatorBinding:
     """Resolved evaluator configuration for one evaluation run."""
 
-    provider: Literal["openai", "gemini"]
+    provider: Literal["local", "openai", "gemini"]
     model: str
     environment: dict[str, str]
 
@@ -23,7 +23,15 @@ class EvaluatorBinding:
 def build_evaluator_binding(settings: Settings) -> EvaluatorBinding:
     """Resolve credentials for a real evaluator provider."""
 
+    if settings.evaluation_evaluator_provider == "local":
+        return EvaluatorBinding(
+            provider="local",
+            model=settings.evaluation_evaluator_model,
+            environment={},
+        )
     if settings.evaluation_evaluator_provider == "openai":
+        if settings.runtime_mode == "offline":
+            raise ValueError("OpenAI evaluation is disabled in RUNTIME_MODE=offline")
         if not settings.openai_api_key:
             msg = (
                 "OPENAI_API_KEY is required when "
@@ -36,6 +44,8 @@ def build_evaluator_binding(settings: Settings) -> EvaluatorBinding:
             environment={"OPENAI_API_KEY": settings.openai_api_key},
         )
     if settings.evaluation_evaluator_provider == "gemini":
+        if settings.runtime_mode == "offline":
+            raise ValueError("Gemini evaluation is disabled in RUNTIME_MODE=offline")
         if not settings.gemini_api_key:
             msg = (
                 "GEMINI_API_KEY is required when "
@@ -50,7 +60,7 @@ def build_evaluator_binding(settings: Settings) -> EvaluatorBinding:
                 "GOOGLE_API_KEY": settings.gemini_api_key,
             },
         )
-    msg = "EVALUATION_EVALUATOR_PROVIDER must be one of openai or gemini"
+    msg = "EVALUATION_EVALUATOR_PROVIDER must be one of local, openai, or gemini"
     raise ValueError(msg)
 
 

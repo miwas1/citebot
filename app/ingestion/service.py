@@ -50,6 +50,7 @@ class IngestionService:
         """Initialize storage backends that the ingestion service depends on."""
 
         await self._object_store.initialize()
+        self._settings.structured_document_path.mkdir(parents=True, exist_ok=True)
         await self._sparse_index.initialize()
         await self._pgvector_writer.initialize()
 
@@ -57,8 +58,8 @@ class IngestionService:
         self,
         source_path: Path,
         force_reindex: bool = False,
-        embedding_version: str = "v1",
-        index_version: str = "v1",
+        embedding_version: str = "qwen3-0.6b-v1",
+        index_version: str = "v2",
     ) -> JobStatusResponse:
         """Ingest a file or directory and return the resulting job summary."""
 
@@ -69,7 +70,74 @@ class IngestionService:
             force_reindex=force_reindex,
             embedding_version=embedding_version,
             index_version=index_version,
+            status="running",
+            max_attempts=self._settings.ingestion_max_attempts,
         )
+        return await self._process_job(
+            job_id=job_id,
+            source_path=source_path,
+            force_reindex=force_reindex,
+            embedding_version=embedding_version,
+            index_version=index_version,
+        )
+
+    async def enqueue_path(
+        self,
+        source_path: Path,
+        force_reindex: bool = False,
+        embedding_version: str | None = None,
+        index_version: str = "v2",
+    ) -> JobStatusResponse:
+        """Persist an ingestion request for the durable worker queue."""
+
+        job_id = str(uuid4())
+        await self._repository.create_job(
+            job_id=job_id,
+            source_path=str(source_path),
+            force_reindex=force_reindex,
+            embedding_version=embedding_version or self._settings.embedding_version,
+            index_version=index_version,
+            status="queued",
+            max_attempts=self._settings.ingestion_max_attempts,
+        )
+        job = await self._repository.get_job(job_id)
+        if job is None:
+            raise RuntimeError(f"Ingestion job disappeared after enqueue: {job_id}")
+        return job
+
+    async def run_next_job(self, worker_id: str) -> JobStatusResponse | None:
+        """Claim and process one queued job, returning its terminal status."""
+
+        job = await self._repository.claim_next_job(
+            worker_id=worker_id,
+            lease_seconds=self._settings.queue_lease_seconds,
+        )
+        if job is None:
+            return None
+        return await self._process_job(
+            job_id=job.job_id,
+            source_path=Path(job.source_path),
+            force_reindex=job.force_reindex,
+            embedding_version=job.embedding_version,
+            index_version=job.index_version,
+            worker_id=worker_id,
+        )
+
+    async def recover_stale_jobs(self) -> int:
+        """Return expired worker leases to the durable queue."""
+
+        return await self._repository.recover_stale_jobs()
+
+    async def _process_job(
+        self,
+        job_id: str,
+        source_path: Path,
+        force_reindex: bool,
+        embedding_version: str,
+        index_version: str,
+        worker_id: str | None = None,
+    ) -> JobStatusResponse:
+        """Process a foreground or worker-claimed job using the same pipeline."""
 
         documents_seen = 0
         documents_indexed = 0
@@ -79,6 +147,12 @@ class IngestionService:
         try:
             for loaded_document in self._loader.load(source_path):
                 documents_seen += 1
+                if worker_id is not None:
+                    await self._repository.heartbeat(
+                        job_id,
+                        worker_id,
+                        self._settings.queue_lease_seconds,
+                    )
                 document = self._normalizer.normalize(loaded_document)
                 existing_state = await self._repository.get_document_state(
                     document.source_uri
@@ -104,6 +178,21 @@ class IngestionService:
                     document.document_id,
                     document.text,
                 )
+                if document.structured is not None:
+                    structured_path = await self._object_store.store_structured(
+                        document.document_id,
+                        document.structured.model_dump(mode="json"),
+                        self._settings.structured_document_path,
+                    )
+                    document = document.model_copy(
+                        update={
+                            "metadata": {
+                                **document.metadata,
+                                "structured_document_path": structured_path,
+                                "structured_schema_version": document.structured.schema_version,
+                            }
+                        }
+                    )
                 await self._repository.save_document(document, chunks, raw_text_path)
                 await self._pgvector_writer.upsert_chunks(document, chunks, embeddings)
                 await self._qdrant_writer.upsert_chunks(document, chunks, embeddings)
@@ -137,8 +226,8 @@ class IngestionService:
     async def reindex_path(
         self,
         source_path: Path,
-        embedding_version: str = "v1",
-        index_version: str = "v1",
+        embedding_version: str = "qwen3-0.6b-v1",
+        index_version: str = "v2",
     ) -> JobStatusResponse:
         """Force a re-index of the given corpus source path."""
 

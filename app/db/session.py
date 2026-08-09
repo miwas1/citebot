@@ -14,12 +14,13 @@ from app.db.base import Base
 class DatabaseSessionManager:
     """Create, initialize, and dispose async database sessions."""
 
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, sqlite_busy_timeout_ms: int = 5000) -> None:
         """Build the async engine and session factory for the configured database."""
 
         self._engine = create_async_engine(
             database_url, future=True, pool_pre_ping=True
         )
+        self._sqlite_busy_timeout_ms = sqlite_busy_timeout_ms
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
     async def initialize(self) -> None:
@@ -27,6 +28,44 @@ class DatabaseSessionManager:
 
         async with self._engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+            if connection.dialect.name == "sqlite":
+                await connection.exec_driver_sql("PRAGMA journal_mode=WAL")
+                await connection.exec_driver_sql(
+                    f"PRAGMA busy_timeout={self._sqlite_busy_timeout_ms}"
+                )
+                await connection.run_sync(self._ensure_sqlite_columns)
+
+    def _ensure_sqlite_columns(self, connection) -> None:
+        """Apply additive columns for installations created before structured data."""
+
+        additions = {
+            "chunks": {
+                "element_ids": "JSON",
+                "bbox_refs": "JSON",
+                "extraction_method": "VARCHAR(64)",
+                "min_confidence": "FLOAT",
+            },
+            "ingestion_jobs": {
+                "attempt_count": "INTEGER DEFAULT 0",
+                "max_attempts": "INTEGER DEFAULT 3",
+                "lease_owner": "VARCHAR(128)",
+                "lease_expires_at": "DATETIME",
+                "heartbeat_at": "DATETIME",
+                "stage": "VARCHAR(64)",
+                "progress_current": "INTEGER DEFAULT 0",
+                "progress_total": "INTEGER DEFAULT 0",
+            },
+        }
+        from sqlalchemy import inspect
+
+        inspector = inspect(connection)
+        for table_name, columns in additions.items():
+            existing = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name, column_type in columns.items():
+                if column_name not in existing:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+                    )
 
     async def ping(self) -> bool:
         """Check whether the database accepts a trivial query."""

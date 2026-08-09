@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.core.dependencies import get_container
 from app.core.lifecycle import ServiceContainer
@@ -26,10 +26,19 @@ AdminAccessDependency = Annotated[None, Depends(require_admin_access)]
 async def run_ingestion_job(
     request: IngestionRequest,
     container: ContainerDependency,
+    response: Response,
     _: AdminAccessDependency,
 ) -> JobStatusResponse:
-    """Run a foreground ingestion job for the requested source path."""
+    """Run or enqueue an ingestion job according to the runtime execution mode."""
 
+    if container.settings.ingestion_execution_mode == "queued":
+        response.status_code = status.HTTP_202_ACCEPTED
+        return await container.ingestion_service.enqueue_path(
+            source_path=Path(request.source_path),
+            force_reindex=request.force_reindex,
+            embedding_version=request.embedding_version,
+            index_version=request.index_version,
+        )
     return await container.ingestion_service.ingest_path(
         source_path=Path(request.source_path),
         force_reindex=request.force_reindex,

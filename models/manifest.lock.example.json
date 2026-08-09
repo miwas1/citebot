@@ -1,0 +1,29 @@
+{
+  "schema_version": "model-manifest-v1",
+  "artifacts": [
+    {
+      "name": "qwen3-embedding-0.6b",
+      "path": "Qwen3-Embedding-0.6B",
+      "size": 0,
+      "sha256": "replace-with-reviewed-sha256",
+      "revision": "pinned-revision",
+      "license": "record-upstream-license"
+    },
+    {
+      "name": "phi-4-mini-instruct-q4",
+      "path": "phi-4-mini-instruct-q4.gguf",
+      "size": 0,
+      "sha256": "replace-with-reviewed-sha256",
+      "revision": "pinned-revision",
+      "license": "record-upstream-license"
+    },
+    {
+      "name": "paddleocr-models",
+      "path": "paddleocr",
+      "size": 0,
+      "sha256": "replace-with-reviewed-sha256",
+      "revision": "pinned-revision",
+      "license": "record-upstream-license"
+    }
+  ]
+}

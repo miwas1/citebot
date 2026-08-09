@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from abc import ABC, abstractmethod
 
@@ -32,6 +33,53 @@ class LocalAnswerGenerator(BaseAnswerGenerator):
         """Generate an extractive answer from the highest-ranked contexts."""
 
         return _build_answer_from_contexts(request.contexts, request.query)
+
+
+class LlamaCppAnswerGenerator(BaseAnswerGenerator):
+    """Generate grounded JSON answers through a local llama.cpp server."""
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: float = 60.0,
+        concurrency: int = 1,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._model = model
+        self._timeout_seconds = timeout_seconds
+        self._semaphore = asyncio.Semaphore(concurrency)
+        self._transport = transport
+
+    async def generate(self, request: ResearchGenerationRequest) -> ResearchAnswer:
+        """Generate one answer while enforcing the local model concurrency budget."""
+
+        endpoint = self._base_url
+        if not endpoint.endswith("/v1"):
+            endpoint = f"{endpoint}/v1"
+        endpoint = f"{endpoint}/chat/completions"
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": build_answer_instructions()},
+                {"role": "user", "content": build_answer_prompt(request)},
+            ],
+            "temperature": 0.2,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            async with self._semaphore:
+                async with httpx.AsyncClient(
+                    timeout=self._timeout_seconds,
+                    transport=self._transport,
+                ) as client:
+                    response = await client.post(endpoint, json=payload)
+                    response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise RuntimeError(f"Local answer service unavailable: {error}") from error
+        output_text = _extract_chat_completion_text(response.json())
+        return _parse_answer_json(output_text, request.contexts, request.query)
 
 
 class OpenAIAnswerGenerator(BaseAnswerGenerator):
@@ -115,14 +163,25 @@ class GeminiAnswerGenerator(BaseAnswerGenerator):
 def build_answer_generator(settings: Settings) -> BaseAnswerGenerator:
     """Build the configured answer generator with safe local fallback behavior."""
 
-    if settings.answer_provider == "local":
+    if settings.answer_provider == "llama-cpp":
+        return LlamaCppAnswerGenerator(
+            base_url=settings.llm_base_url,
+            model=settings.answer_model,
+            timeout_seconds=settings.llm_timeout_seconds,
+            concurrency=settings.llm_generation_concurrency,
+        )
+    if settings.answer_provider in {"local", "test"}:
         return LocalAnswerGenerator()
     if settings.answer_provider == "openai":
+        if settings.runtime_mode == "offline":
+            raise ValueError("OpenAI answers are disabled in RUNTIME_MODE=offline")
         if not settings.openai_api_key:
             msg = "OPENAI_API_KEY is required when ANSWER_PROVIDER=openai"
             raise ValueError(msg)
         return OpenAIAnswerGenerator(settings.openai_api_key, settings.answer_model)
     if settings.answer_provider == "gemini":
+        if settings.runtime_mode == "offline":
+            raise ValueError("Gemini answers are disabled in RUNTIME_MODE=offline")
         if not settings.gemini_api_key:
             msg = "GEMINI_API_KEY is required when ANSWER_PROVIDER=gemini"
             raise ValueError(msg)
@@ -130,8 +189,24 @@ def build_answer_generator(settings: Settings) -> BaseAnswerGenerator:
             settings.gemini_api_key,
             settings.gemini_answer_model,
         )
-    msg = "ANSWER_PROVIDER must be one of local, openai, or gemini"
+    msg = "ANSWER_PROVIDER must be one of llama-cpp, local, test, openai, or gemini"
     raise ValueError(msg)
+
+
+def _extract_chat_completion_text(payload: dict[str, object]) -> str:
+    """Extract content from an OpenAI-compatible chat completion response."""
+
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0]
+    if not isinstance(first, dict):
+        return ""
+    message = first.get("message")
+    if isinstance(message, dict):
+        content = message.get("content")
+        return content if isinstance(content, str) else ""
+    return ""
 
 
 def _parse_answer_json(
@@ -205,6 +280,9 @@ def _build_citations(contexts: list[ResearchContext]) -> list[Citation]:
                 title=context.title,
                 source_uri=context.source_uri,
                 location_marker=context.location_marker,
+                page=context.metadata.get("page"),
+                element_ids=list(context.metadata.get("element_ids") or []),
+                bbox_refs=list(context.metadata.get("bbox_refs") or []),
                 source_type=context.source_type,
                 support_span=support,
                 quoted_support=support,
