@@ -21,7 +21,7 @@ services:
       CHUNK_SIZE: "800"
       CHUNK_OVERLAP: "120"
     ports:
-      - "8000"
+      - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -33,7 +33,7 @@ services:
       - ./storage:/app/storage
 
   nginx:
-    image: nginx:latest
+    image: nginx:1.27-alpine
     ports:
       - "80:80"
     volumes:
@@ -42,7 +42,8 @@ services:
       - api
 
   dozzle:
-    image: amir20/dozzle:latest
+    image: amir20/dozzle:v8.12.12
+    profiles: ["observability"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:

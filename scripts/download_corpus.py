@@ -73,12 +73,11 @@ import argparse
 import json
 import logging
 import os
-import sys
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -174,7 +173,7 @@ def _iso(dt_str: str | None) -> str | None:
     for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S"):
         try:
             dt = datetime.strptime(dt_str, fmt)
-            return dt.replace(tzinfo=timezone.utc).isoformat()
+            return dt.replace(tzinfo=UTC).isoformat()
         except ValueError:
             continue
     return dt_str  # return as-is if unparseable
@@ -426,7 +425,7 @@ def _parse_s2_paper(
     if after_date_dt and pub_date_str:
         try:
             pd = datetime.strptime(pub_date_str[:10], "%Y-%m-%d").replace(
-                tzinfo=timezone.utc
+                tzinfo=UTC
             )
             if pd < after_date_dt:
                 return None
@@ -497,7 +496,7 @@ def download_semantic_scholar(
     if after_date:
         try:
             after_date_dt = datetime.strptime(after_date, "%Y-%m-%d").replace(
-                tzinfo=timezone.utc
+                tzinfo=UTC
             )
         except ValueError:
             log.warning("S2: could not parse after_date '%s'; ignoring", after_date)

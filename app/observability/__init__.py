@@ -6,8 +6,7 @@ import logging
 
 from app.core.config import Settings
 from app.observability.metrics import InMemoryMetricsRegistry
-from app.observability.middleware import (InMemoryRateLimiter,
-                                          ObservabilityMiddleware)
+from app.observability.middleware import InMemoryRateLimiter, ObservabilityMiddleware
 
 _LOGGING_CONFIGURED = False
 

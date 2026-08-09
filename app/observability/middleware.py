@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from collections import defaultdict, deque
 from time import monotonic
-from typing import Deque
 from uuid import uuid4
 
 from fastapi import Request
@@ -25,7 +24,7 @@ class InMemoryRateLimiter:
         """Store runtime settings and initialize timestamp buckets."""
 
         self._settings = settings
-        self._buckets: dict[str, Deque[float]] = defaultdict(deque)
+        self._buckets: dict[str, deque[float]] = defaultdict(deque)
 
     def allow(self, scope_name: str, client_key: str) -> bool:
         """Return whether the current request should be allowed for this scope."""
@@ -109,7 +108,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 duration_ms=duration_ms,
             )
             logger.exception(
-                "event=request_failed scope=%s method=%s path=%s status=500 duration_ms=%.2f request_id=%s trace_id=%s client=%s",
+                "event=request_failed scope=%s method=%s path=%s status=500 "
+                "duration_ms=%.2f request_id=%s trace_id=%s client=%s",
                 scope_name,
                 request.method,
                 request.url.path,
@@ -129,7 +129,8 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Trace-ID"] = trace_id
         logger.info(
-            "event=request_completed scope=%s method=%s path=%s status=%s duration_ms=%.2f request_id=%s trace_id=%s client=%s",
+            "event=request_completed scope=%s method=%s path=%s status=%s "
+            "duration_ms=%.2f request_id=%s trace_id=%s client=%s",
             scope_name,
             request.method,
             request.url.path,

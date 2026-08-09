@@ -10,7 +10,6 @@ Requirements:
 
 import json
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -90,7 +89,7 @@ def main():
     pdf_temp_dir.mkdir(exist_ok=True)
 
     processed = 0
-    with open(args.input_jsonl, "r") as f:
+    with open(args.input_jsonl) as f:
         for line in f:
             if processed >= args.max_docs:
                 break

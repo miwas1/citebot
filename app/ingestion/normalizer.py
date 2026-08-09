@@ -32,7 +32,7 @@ class DocumentNormalizer:
         )
 
     def _normalize_text(self, text: str) -> str:
-        """Collapse excessive whitespace while stripping null bytes and preserving paragraph boundaries."""
+        """Collapse whitespace, strip null bytes, and preserve paragraphs."""
 
         # PostgreSQL/asyncpg cannot store null bytes (\0x00) in VARCHAR/TEXT columns
         text = text.replace("\x00", "")

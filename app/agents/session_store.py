@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
-
 from app.agents.schemas import ResearchSessionRecord
 from app.db.models import ResearchSessionRecordModel
 from app.db.session import DatabaseSessionManager

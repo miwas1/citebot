@@ -22,8 +22,10 @@ def write_eval_fixture(dataset_path: Path, source_uri: str) -> None:
             "    {\n"
             '      "eval_case_id": "citation-case",\n'
             '      "question": "How does citation traceability work?",\n'
-            '      "expected_answer_traits": ["stable chunk identifiers", "character offsets"],\n'
-            '      "reference_answer": "Citation traceability depends on stable chunk identifiers and character offsets.",\n'
+            '      "expected_answer_traits": ["stable chunk identifiers", '
+            '"character offsets"],\n'
+            '      "reference_answer": "Citation traceability depends on stable '
+            'chunk identifiers and character offsets.",\n'
             f'      "expected_source_uris": ["{source_uri}"]\n'
             "    }\n"
             "  ]\n"

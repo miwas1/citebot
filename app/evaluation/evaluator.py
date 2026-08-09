@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Iterator, Literal
+from typing import Literal
 
 from app.core.config import Settings
 

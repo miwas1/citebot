@@ -202,10 +202,7 @@ cython_debug/
 #   option (not recommended) you can uncomment the following to ignore the entire idea folder.
 # .idea/
 
-# Abstra
-#   Abstra is an AI-powered process automation framework.
-#   Ignore directories containing user credentials, local state, and settings.
-#   Learn more at https://abstra.io/docs
+# Abstra local settings
 .abstra/
 data/sample_corpus/*
 # Visual Studio Code
@@ -219,6 +216,26 @@ tempCodeRunnerFile.py
 
 # Ruff stuff:
 .ruff_cache/
+
+# Local tooling and planning state
+.agents/
+.codex/
+.planning/
+.claude/
+.cursor/
+.windsurf/
+.cursorrules
+.windsurfrules
+.clinerules
+AGENTS.md
+CLAUDE.md
+CODEX.md
+GEMINI.md
+CITEBOT_IMPLEMENTATION_PLAN.md
+*.prompt.md
+*.ai.md
+.github/copilot-instructions.md
+.github/prompts/
 
 # PyPI configuration file
 .pypirc

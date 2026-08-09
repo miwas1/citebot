@@ -343,14 +343,26 @@ class Settings(BaseSettings):
             and self.evaluation_evaluator_provider == "openai"
             and not self.openai_api_key
         ):
-            msg = "OPENAI_API_KEY is required when APP_ENV=production and EVALUATION_EVALUATOR_PROVIDER=openai"
+            msg = (
+                "OPENAI_API_KEY is required when APP_ENV=production and "
+                "EVALUATION_EVALUATOR_PROVIDER=openai"
+            )
             raise ValueError(msg)
         if (
             self.app_env == "production"
             and self.evaluation_evaluator_provider == "gemini"
             and not self.gemini_api_key
         ):
-            msg = "GEMINI_API_KEY is required when APP_ENV=production and EVALUATION_EVALUATOR_PROVIDER=gemini"
+            msg = (
+                "GEMINI_API_KEY is required when APP_ENV=production and "
+                "EVALUATION_EVALUATOR_PROVIDER=gemini"
+            )
+            raise ValueError(msg)
+        if self.app_env == "production" and not self.research_api_key:
+            msg = "RESEARCH_API_KEY is required when APP_ENV=production"
+            raise ValueError(msg)
+        if self.app_env == "production" and not self.admin_api_key:
+            msg = "ADMIN_API_KEY is required when APP_ENV=production"
             raise ValueError(msg)
         return self
 

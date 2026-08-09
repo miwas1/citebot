@@ -1,6 +1,6 @@
 # CiteBot
 
-CiteBot is a production-oriented research assistant scaffold for agentic retrieval-augmented generation workflows.
+CiteBot is a production-oriented research assistant scaffold for agentic retrieval-augmented generation workflows. It runs locally with deterministic providers and SQLite, or with the optional PostgreSQL, pgvector, Qdrant, and hosted-model backends.
 
 ---
 
@@ -15,6 +15,7 @@ CiteBot is a production-oriented research assistant scaffold for agentic retriev
 - [Evaluation Workflow](#evaluation-workflow)
 - [Development Commands](#development-commands)
 - [Real Backend Benchmarking](#real-backend-benchmarking)
+- [Contributing](#contributing)
 
 ---
 
@@ -29,7 +30,8 @@ CiteBot is a production-oriented research assistant scaffold for agentic retriev
 ### 1. Clone and install
 
 ```bash
-git clone <repo-url> && cd citebot
+git clone https://github.com/miwas1/citebot.git
+cd citebot
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
@@ -47,7 +49,7 @@ pip install -e .[dev,evaluation]
 cp .env.example .env
 ```
 
-Open `.env` and set the values relevant to your workflow:
+The example file is intentionally configured for a no-credentials local run. Open `.env` only if you want to enable hosted models, web search, or the Docker-backed services:
 
 | Variable | Description | Default |
 |---|---|---|
@@ -57,9 +59,11 @@ Open `.env` and set the values relevant to your workflow:
 | `EMBEDDING_MODEL` | OpenAI embedding model name | `text-embedding-3-small` |
 | `GEMINI_EMBEDDING_MODEL` | Gemini embedding model name | `models/text-embedding-004` |
 | `ANSWER_PROVIDER` | `local`, `openai`, or `gemini` | `local` |
-| `ANSWER_MODEL` | OpenAI chat model for research answers | `gpt-4o` |
+| `ANSWER_MODEL` | OpenAI chat model for research answers | `gpt-5` |
 | `TAVILY_API_KEY` | Optional – enables live web search | — |
 | `EVALUATION_EVALUATOR_PROVIDER` | `openai` or `gemini` for RAGAS evaluation runs | `openai` |
+| `RESEARCH_API_KEY` | Optional in development; protects research routes when set | — |
+| `ADMIN_API_KEY` | Optional in development; protects admin routes when set | — |
 | `S2_API_KEY` | Optional – raises Semantic Scholar rate limits | — |
 
 ### 3. Start the full stack
@@ -70,10 +74,12 @@ make dev-up
 
 Services started:
 
-- FastAPI on `http://localhost:8000`
+- FastAPI on `http://localhost:8000` (nginx is also available on `http://localhost`)
 - PostgreSQL with pgvector on `localhost:5432`
 - Qdrant on `localhost:6333`
 - Redis on `localhost:6379`
+
+The API container uses local deterministic embeddings and answer generation, so Docker startup does not require an API key. Dozzle is opt-in with `docker compose --profile observability up`.
 
 ### 4. Run without Docker (SQLite / local vector index)
 
@@ -92,7 +98,9 @@ make dev-up          # start all services
 make ingest-sample   # ingest the bundled sample corpus
 make search-sample   # run a test search
 make test            # run the test suite
-make dev-down        # stop and remove containers
+make dev-logs        # follow API and nginx logs
+make dev-down        # stop containers and preserve volumes
+make dev-reset       # stop containers and delete volumes
 ```
 
 ---
@@ -372,6 +380,8 @@ pip install -e .[evaluation]
 make test                       # run pytest suite
 make lint                       # ruff check
 make dev-down                   # stop Docker services
+make dev-logs                   # follow Docker logs
+make dev-reset                  # remove Docker services and volumes
 
 make corpus-download            # download ~6k interpretability papers
 make corpus-seed-ingest         # download + merge + ingest in one step
@@ -440,3 +450,8 @@ artifacts/
   evaluations/                    Persisted evaluation run JSON artifacts
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow. Run `make test` and `make lint` before opening a pull request. Security issues should be reported privately using the process in [SECURITY.md](SECURITY.md).
+
+CiteBot source code is released under the MIT License; see [LICENSE](LICENSE). Bundled third-party corpus content has separate provenance and licensing considerations described in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

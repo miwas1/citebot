@@ -14,13 +14,16 @@ ENV PATH="/root/.local/bin/:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md LICENSE ./
+COPY uv.lock ./
 COPY app ./app
 COPY docs ./docs
 COPY data ./data
 
 # Install dependencies using uv
-RUN uv pip install --system --no-cache .
+RUN uv sync --frozen --no-dev
+
+ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8000
 

@@ -19,8 +19,10 @@ def write_eval_fixture(dataset_path: Path, source_uri: str) -> None:
             "    {\n"
             '      "eval_case_id": "roadmap-case",\n'
             '      "question": "When should re-indexing be triggered?",\n'
-            '      "expected_answer_traits": ["embedding versions change", "quality thresholds regress"],\n'
-            '      "reference_answer": "Re-indexing should be triggered when embedding versions change or quality thresholds regress.",\n'
+            '      "expected_answer_traits": ["embedding versions change", '
+            '"quality thresholds regress"],\n'
+            '      "reference_answer": "Re-indexing should be triggered when '
+            'embedding versions change or quality thresholds regress.",\n'
             f'      "expected_source_uris": ["{source_uri}"]\n'
             "    }\n"
             "  ]\n"
@@ -43,8 +45,9 @@ def test_evaluation_api_runs_and_fetches_saved_artifact(
             "{\n"
             '  "title": "Roadmap Notes",\n'
             '  "source_uri": "local://roadmap-notes",\n'
-            '  "text": "Hybrid retrieval combines dense semantic search with sparse keyword matching. '
-            'Re-indexing should be triggered when embedding versions change or quality thresholds regress."\n'
+            '  "text": "Hybrid retrieval combines dense semantic search with '
+            'sparse keyword matching. Re-indexing should be triggered when '
+            'embedding versions change or quality thresholds regress."\n'
             "}\n"
         ),
         encoding="utf-8",

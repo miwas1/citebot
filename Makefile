@@ -8,15 +8,21 @@ CORPUS_MERGED      ?= $(CORPUS_OUTPUT_DIR)/interpretability_merged.jsonl
 EVAL_DATASET       ?= data/evaluation_datasets/interpretability_scenario.json
 EVAL_OUTPUT        ?= artifacts/evaluations/interpretability_scenario_result.json
 
-.PHONY: dev-up dev-down test lint ingest-sample search-sample benchmark-retrieval integration-retrieval eval-smoke eval-ci \
+.PHONY: dev-up dev-logs dev-down dev-reset test lint ingest-sample search-sample benchmark-retrieval integration-retrieval eval-smoke eval-ci \
         corpus-download corpus-download-large corpus-download-full \
         ingest-interpretability eval-interpretability eval-interpretability-ragas \
         corpus-stats
 
 dev-up:
-	docker compose up --build
+	docker compose up --build -d
+
+dev-logs:
+	docker compose logs -f api nginx
 
 dev-down:
+	docker compose down
+
+dev-reset:
 	docker compose down -v
 
 test:
