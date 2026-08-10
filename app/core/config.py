@@ -58,10 +58,10 @@ class Settings(BaseSettings):
         default=Path("./models/paddleocr"), alias="OCR_MODEL_PATH"
     )
     ocr_detection_model_name: str = Field(
-        default="PP-OCRv5_mobile_det", alias="OCR_DETECTION_MODEL_NAME"
+        default="PP-OCRv6_tiny_det", alias="OCR_DETECTION_MODEL_NAME"
     )
     ocr_recognition_model_name: str = Field(
-        default="PP-OCRv5_mobile_rec", alias="OCR_RECOGNITION_MODEL_NAME"
+        default="PP-OCRv6_tiny_rec", alias="OCR_RECOGNITION_MODEL_NAME"
     )
     ocr_fallback_provider: str = Field(
         default="tesseract", alias="OCR_FALLBACK_PROVIDER"
@@ -155,7 +155,7 @@ class Settings(BaseSettings):
         default=Path("./models/manifest.lock.json"), alias="MODEL_MANIFEST_PATH"
     )
     gemini_answer_model: str = Field(
-        default="gemini-3-flash-preview",
+        default="gemini-3.6-flash",
         alias="GEMINI_ANSWER_MODEL",
     )
     research_top_k: int = Field(default=5, alias="RESEARCH_TOP_K")

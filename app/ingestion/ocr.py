@@ -35,8 +35,8 @@ class PaddleOcrEngine(OcrEngine):
         self,
         languages: Sequence[str],
         model_path: Path | None = None,
-        detection_model_name: str = "PP-OCRv5_mobile_det",
-        recognition_model_name: str = "PP-OCRv5_mobile_rec",
+        detection_model_name: str = "PP-OCRv6_tiny_det",
+        recognition_model_name: str = "PP-OCRv6_tiny_rec",
     ) -> None:
         self._languages = list(languages)
         self._model_path = model_path

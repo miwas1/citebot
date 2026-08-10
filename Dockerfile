@@ -1,18 +1,17 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.0 /uv /uvx /bin/
 
 WORKDIR /app
 
-# Install uv and system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
     build-essential \
     libgomp1 \
     libpq-dev \
     tesseract-ocr \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/root/.local/bin/:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 

@@ -109,7 +109,7 @@ def build_specs(environ: dict[str, str]) -> list[ArtifactSpec]:
         ArtifactSpec(
             name="paddleocr-detection",
             repository=environ.get(
-                "OCR_DETECTION_MODEL_REPOSITORY", "PaddlePaddle/PP-OCRv5_mobile_det"
+                "OCR_DETECTION_MODEL_REPOSITORY", "PaddlePaddle/PP-OCRv6_tiny_det"
             ),
             revision=environ.get("OCR_DETECTION_MODEL_REVISION", "main"),
             path=Path("paddleocr/detection"),
@@ -117,7 +117,7 @@ def build_specs(environ: dict[str, str]) -> list[ArtifactSpec]:
         ArtifactSpec(
             name="paddleocr-recognition",
             repository=environ.get(
-                "OCR_RECOGNITION_MODEL_REPOSITORY", "PaddlePaddle/PP-OCRv5_mobile_rec"
+                "OCR_RECOGNITION_MODEL_REPOSITORY", "PaddlePaddle/PP-OCRv6_tiny_rec"
             ),
             revision=environ.get("OCR_RECOGNITION_MODEL_REVISION", "main"),
             path=Path("paddleocr/recognition"),

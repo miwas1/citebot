@@ -70,7 +70,7 @@ services:
     restart: unless-stopped
 
   embedding:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     command:
       - --model-id
       - /models/Qwen3-Embedding-0.6B
@@ -97,7 +97,7 @@ services:
     restart: unless-stopped
 
   llm:
-    image: ghcr.io/ggerganov/llama.cpp:server
+    image: ghcr.io/ggml-org/llama.cpp:server-b9404
     command:
       - -m
       - /models/phi-4-mini-instruct-q4.gguf
@@ -127,7 +127,7 @@ services:
     restart: unless-stopped
 
   qdrant:
-    image: qdrant/qdrant:v1.13.4
+    image: qdrant/qdrant:v1.18.2
     expose:
       - "6333"
     volumes:
@@ -144,7 +144,7 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: pgvector/pgvector:pg18
+    image: pgvector/pgvector:0.8.2-pg18
     profiles: ["postgres"]
     environment:
       POSTGRES_USER: citebot
@@ -164,7 +164,7 @@ services:
       - citebot_internal
 
   dozzle:
-    image: amir20/dozzle:latest
+    image: amir20/dozzle:v10.6.2
     profiles: ["observability"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro

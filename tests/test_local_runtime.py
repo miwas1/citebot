@@ -180,7 +180,7 @@ def test_model_provisioner_writes_verifiable_local_manifest(tmp_path: Path) -> N
     (artifact_path / "detection" / "config.yml").write_text("local", encoding="utf-8")
     spec = ArtifactSpec(
         name="paddleocr-models",
-        repository="PaddlePaddle/PP-OCRv5_mobile_det",
+        repository="PaddlePaddle/PP-OCRv6_tiny_det",
         revision="main",
         path=Path("paddleocr"),
     )
