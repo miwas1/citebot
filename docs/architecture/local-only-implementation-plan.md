@@ -97,29 +97,32 @@ an environment file; production deployments must set the offline value explicitl
 | `SQLITE_BUSY_TIMEOUT_MS` | `5000` | Validate positive bounded value; enable WAL during initialization. |
 | `OBJECT_STORAGE_PATH` | `/data/documents` | Must be writable and must not escape the configured data root in container mode. |
 | `STRUCTURED_DOCUMENT_PATH` | `/data/structured` | Stores versioned canonical JSON/Markdown and page artifacts. |
-| `SPARSE_INDEX_PATH` | `/data/indexes/sparse.json` | Retain current local sparse index initially; harden atomic writes before worker split. |
+| `SPARSE_INDEX_PATH` | `/data/sparse_index.sqlite3` | SQLite FTS5 sparse index with transactional updates; legacy JSON is migrated to a sibling SQLite file. |
 | `VECTOR_BACKEND` | `qdrant` | Allow `qdrant` or `local` for tests/small fallback. Do not dual-write by default. |
 | `QDRANT_URL` | `http://qdrant:6333` | Host must pass the local-service allowlist. |
 | `QDRANT_COLLECTION` | `citebot_chunks_qwen3_v2` | Versioned; never reuse an incompatible-dimension collection. |
+| `ALLOW_LOCAL_DENSE_FALLBACK` | `false` in Compose | Prevents an outage from triggering full-corpus re-embedding; enable only for tests/small corpora. |
+| `MAX_LOCAL_DENSE_CANDIDATES` | `512` | Hard cap for explicit local dense fallback. |
 | `DOCUMENT_PARSER` | `auto` | `auto`, `native`, or `ocr`; `auto` is the production default. |
 | `OCR_PROVIDER` | `paddleocr` | Local adapter identifier; model/data paths configured separately. |
 | `OCR_FALLBACK_PROVIDER` | `tesseract` | Allow `none` for constrained installs. |
 | `OCR_LANGUAGES` | `en` | Comma-separated installed language packs; fail readiness if requested packs are absent. |
 | `OCR_MIN_NATIVE_TEXT_COVERAGE` | `0.60` | Page-level threshold; benchmark and tune against representative fixtures. |
 | `OCR_MIN_CONFIDENCE` | `0.75` | Below this, retry/fallback or flag the element/page as uncertain. |
-| `OCR_MAX_PAGES` | `500` | Hard input limit, overridable with a positive bounded value. |
+| `OCR_MAX_PAGES` | `100` | Conservative CPU/RAM input limit for the 16 GB profile; raise only after a soak benchmark. |
 | `OCR_CONCURRENCY` | `1` | Reject values above detected/configured resource budget unless a force flag is used. |
 | `EMBEDDING_PROVIDER` | `local-http` | `test` is permitted only in test mode; hosted providers are invalid. |
 | `EMBEDDING_BASE_URL` | `http://embedding:8081` | Host must pass the allowlist. |
 | `EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | Local artifact/model identifier; override requires a new embedding/index version. |
 | `EMBEDDING_DIMENSION` | `1024` | Validate against service metadata before opening/creating a collection. |
-| `EMBEDDING_BATCH_SIZE` | `8` | Tune from benchmark; worker must cap payload bytes as well as item count. |
+| `EMBEDDING_BATCH_SIZE` | `4` | Tune from benchmark; worker must cap payload bytes as well as item count. |
 | `EMBEDDING_VERSION` | `qwen3-0.6b-v1` | Required in chunks and vector payloads. |
 | `ANSWER_PROVIDER` | `llama-cpp` | `test` only in test mode; hosted providers are invalid. |
 | `LLM_BASE_URL` | `http://llm:8082/v1` | Host must pass the allowlist. |
 | `ANSWER_MODEL` | `phi-4-mini-instruct-q4` | Maps to a pinned local GGUF artifact. |
-| `LLM_CONTEXT_TOKENS` | `8192` | Default within the draft's 4K-12K operating range; validate against server capability. |
-| `LLM_GENERATION_CONCURRENCY` | `1` | Enforced in the API, with a bounded wait and overload response. |
+| `LLM_CONTEXT_TOKENS` | `4096` | Conservative CPU/RAM default; 8192 is an opt-in profile after measured peak-RSS validation. |
+| `LLM_GENERATION_CONCURRENCY` | `1` | Enforced in the model adapter; research admission also bounds active and waiting requests. |
+| `RESEARCH_CONCURRENCY` / `RESEARCH_QUEUE_SIZE` | `1` / `2` | Bound expensive graph executions on a CPU-only host. |
 | `ENABLE_RERANKING` | `true` | Keep current interface. |
 | `RERANKER_PROVIDER` | `heuristic` | Default avoids another resident model; allow a pinned local cross-encoder after benchmarks. |
 | `ALLOW_WEB_SEARCH_DEFAULT` | `false` | Must remain false in offline runtime; web tool is not constructed. |

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 from xml.etree import ElementTree
@@ -27,7 +28,12 @@ class LocalCorpusLoader:
         self._tesseract = None
 
     def load(self, source_path: Path) -> list[LoadedDocument]:
-        """Load all supported documents from the given file or directory path."""
+        """Load all supported documents, retaining the compatibility list API."""
+
+        return list(self.iter_load(source_path))
+
+    def iter_load(self, source_path: Path) -> Iterator[LoadedDocument]:
+        """Stream supported documents while enforcing per-job resource budgets."""
 
         if not source_path.exists():
             msg = f"Source path does not exist: {source_path}"
@@ -38,25 +44,43 @@ class LocalCorpusLoader:
             if source_path.is_file()
             else sorted(path for path in source_path.rglob("*") if path.is_file())
         )
-        documents: list[LoadedDocument] = []
+        total_bytes = 0
+        documents_seen = 0
         for file_path in files:
-            if file_path.stat().st_size > self._settings.max_input_bytes:
+            file_size = file_path.stat().st_size
+            total_bytes += file_size
+            if total_bytes > self._settings.ingestion_max_source_bytes:
+                raise ValueError(
+                    "Ingestion source exceeds INGESTION_MAX_SOURCE_BYTES: "
+                    f"{self._settings.ingestion_max_source_bytes}"
+                )
+            if file_size > self._settings.max_input_bytes:
                 raise ValueError(
                     f"Input exceeds MAX_INPUT_BYTES: {file_path.name}"
                 )
+            loaded_documents: Iterator[LoadedDocument]
             if file_path.suffix.lower() in {".txt", ".md"}:
-                documents.append(self._load_text_document(file_path))
+                loaded_documents = iter((self._load_text_document(file_path),))
             elif file_path.suffix.lower() == ".json":
-                documents.extend(self._load_json_documents(file_path))
+                loaded_documents = self._load_json_documents(file_path)
             elif file_path.suffix.lower() == ".jsonl":
-                documents.extend(self._load_jsonl_documents(file_path))
+                loaded_documents = self._load_jsonl_documents(file_path)
             elif file_path.suffix.lower() == ".pdf":
-                documents.append(self._load_pdf_document(file_path))
+                loaded_documents = iter((self._load_pdf_document(file_path),))
             elif file_path.suffix.lower() == ".docx":
-                documents.append(self._load_docx_document(file_path))
+                loaded_documents = iter((self._load_docx_document(file_path),))
             elif file_path.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}:
-                documents.append(self._load_image_document(file_path))
-        return documents
+                loaded_documents = iter((self._load_image_document(file_path),))
+            else:
+                continue
+            for document in loaded_documents:
+                documents_seen += 1
+                if documents_seen > self._settings.ingestion_max_documents:
+                    raise ValueError(
+                        "Ingestion source exceeds INGESTION_MAX_DOCUMENTS: "
+                        f"{self._settings.ingestion_max_documents}"
+                    )
+                yield document
 
     def _load_text_document(self, file_path: Path) -> LoadedDocument:
         """Read a plain-text or Markdown document from disk."""
@@ -247,37 +271,33 @@ class LocalCorpusLoader:
         compact = " ".join(value.split())
         return len(compact) <= 120 and (compact.isupper() or compact[:2].isdigit())
 
-    def _load_json_documents(self, file_path: Path) -> list[LoadedDocument]:
+    def _load_json_documents(self, file_path: Path) -> Iterator[LoadedDocument]:
         """Read one or more documents from a JSON file."""
 
         payload = json.loads(file_path.read_text(encoding="utf-8"))
         raw_documents = payload if isinstance(payload, list) else [payload]
-        documents: list[LoadedDocument] = []
         for index, raw_document in enumerate(raw_documents):
-            documents.append(
-                LoadedDocument(
-                    source_uri=raw_document.get("source_uri")
-                    or f"{file_path.resolve()}#{index}",
-                    title=raw_document.get("title") or f"{file_path.stem}-{index}",
-                    text=raw_document.get("text") or raw_document.get("content") or "",
-                    publisher=raw_document.get("publisher"),
-                    published_at=raw_document.get("published_at"),
-                    access_policy=raw_document.get("access_policy", "internal"),
-                    metadata=raw_document.get("metadata", {}),
-                )
+            yield LoadedDocument(
+                source_uri=raw_document.get("source_uri")
+                or f"{file_path.resolve()}#{index}",
+                title=raw_document.get("title") or f"{file_path.stem}-{index}",
+                text=raw_document.get("text") or raw_document.get("content") or "",
+                publisher=raw_document.get("publisher"),
+                published_at=raw_document.get("published_at"),
+                access_policy=raw_document.get("access_policy", "internal"),
+                metadata=raw_document.get("metadata", {}),
             )
-        return documents
 
-    def _load_jsonl_documents(self, file_path: Path) -> list[LoadedDocument]:
+    def _load_jsonl_documents(self, file_path: Path) -> Iterator[LoadedDocument]:
         """Read one JSON document per line without loading the whole corpus."""
 
-        documents: list[LoadedDocument] = []
-        for index, line in enumerate(file_path.read_text(encoding="utf-8").splitlines()):
-            if not line.strip():
-                continue
-            payload = json.loads(line)
-            documents.append(
-                LoadedDocument(
+        with file_path.open(encoding="utf-8") as source:
+            lines = enumerate(source)
+            for index, line in lines:
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                yield LoadedDocument(
                     source_uri=payload.get("source_uri") or f"{file_path.resolve()}#{index}",
                     title=payload.get("title") or f"{file_path.stem}-{index}",
                     text=payload.get("text") or payload.get("content") or "",
@@ -286,8 +306,6 @@ class LocalCorpusLoader:
                     access_policy=payload.get("access_policy", "internal"),
                     metadata=payload.get("metadata", {}),
                 )
-            )
-        return documents
 
     def _load_docx_document(self, file_path: Path) -> LoadedDocument:
         """Extract DOCX paragraphs using the standard-library ZIP/XML parser."""

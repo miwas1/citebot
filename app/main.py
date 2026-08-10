@@ -1,6 +1,9 @@
 """FastAPI application bootstrap."""
 
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import build_api_router
 from app.core.config import get_settings
@@ -29,6 +32,8 @@ def create_app() -> FastAPI:
         rate_limiter=InMemoryRateLimiter(settings),
     )
     application.include_router(build_api_router(), prefix=settings.api_prefix)
+    web_path = Path(__file__).parent / "web"
+    application.mount("/", StaticFiles(directory=web_path, html=True), name="web")
     return application
 
 

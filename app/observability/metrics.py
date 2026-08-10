@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import resource
+import sys
 from collections import defaultdict
 from threading import Lock
 
@@ -62,6 +65,10 @@ class InMemoryMetricsRegistry:
         return {
             "requests": requests,
             "rate_limits": rate_limits,
+            "process": {
+                "pid": os.getpid(),
+                "max_rss_bytes": _max_rss_bytes(),
+            },
         }
 
     def _request_key(self, scope_name: str, path: str, status_code: int) -> str:
@@ -73,3 +80,12 @@ class InMemoryMetricsRegistry:
         """Build the storage key for rate-limit counters."""
 
         return f"{scope_name}|{path}"
+
+
+def _max_rss_bytes() -> int:
+    """Return peak resident memory in bytes for the current process."""
+
+    value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KiB; macOS reports bytes. The deployment target is Linux,
+    # but keeping the branch makes local development output unsurprising.
+    return int(value if sys.platform == "darwin" else value * 1024)

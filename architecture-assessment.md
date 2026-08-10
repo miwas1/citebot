@@ -1,189 +1,213 @@
 # Backend Architecture Assessment
 
 ## Executive summary
-CiteBot is a FastAPI modular monolith with clearly separated ingestion, retrieval, research-agent, evaluation, persistence, and observability modules. It already defaults to SQLite, filesystem storage, deterministic in-process embeddings, and deterministic answer generation, but those `local` providers are test/development substitutes rather than the real local models proposed in the rough draft. The local-only pivot can therefore reuse the existing adapter and service-container seams, but it must replace the meaning of `local`, add structured document/OCR processing, make Qdrant the default dense index, and remove deployed-runtime paths to hosted model and web-search APIs.
+CiteBot is a CPU-only, local-first RAG modular monolith deployed as five always-on Compose services: FastAPI, one ingestion worker, a Qwen3-Embedding-0.6B server, a Phi-4-mini Q4 llama.cpp server, and Qdrant. SQLite, the SQLite FTS5 sparse index, source documents, and model artifacts remain local. The 16 GB profile now has explicit per-service CPU/RAM limits, a 4,096-token context default, bounded research admission, bounded ingestion, and automatic local dense fallback disabled in Compose. It is appropriate for a single user or very small trusted workgroup, subject to the host soak benchmark still being run with the real model artifacts.
 
-The largest migration risks are index incompatibility when moving from 32-dimensional deterministic vectors to Qwen3 embeddings, loss of citation precision because the current document model cannot represent element coordinates and OCR confidence, and resource contention because ingestion runs inside the API process without a durable worker queue. The safest path is an incremental adapter migration with a versioned reindex, not a rewrite. Confidence is high for the application shape and current boundaries, and medium for production behavior because no deployment inventory outside this repository was inspected.
+The recommended operating envelope is one answer generation at a time, one ingestion job at a time, no simultaneous bulk OCR and interactive generation, a 4,096-token initial LLM context, embedding batches of 4-8, and a corpus below roughly 250,000 1,024-dimensional chunks until measurements justify more. The machine should retain at least 2-3 GB of available memory under peak activity and avoid sustained swap. A hard 14 GB aggregate container ceiling, host-level OOM monitoring, and service-specific CPU/thread limits should be added before treating the deployment as reliable.
+
+The highest-impact implementation work is complete: directory/JSONL ingestion streams under byte/document budgets, sparse retrieval uses transactional SQLite FTS5, Qdrant failure no longer triggers an unbounded local re-embedding scan in Compose, and expensive research requests have bounded admission. The remaining release gate is a real-model Docker soak benchmark and restart/reconciliation testing. No rewrite is warranted.
+
+Planning estimates below are deliberately ranges because the repository does not include provisioned model weights or runtime measurements. Actual resident memory depends on the Core i7 generation/instruction set, llama.cpp build, model artifact, context length, corpus size, and Docker/OS overhead.
 
 ## System overview
-- Primary language/framework: Python 3.12+, FastAPI, Pydantic Settings, SQLAlchemy async, and LangGraph (`pyproject.toml:5-29`, `app/main.py:16`, `app/agents/service.py`).
-- Topology: modular monolith in one API process, with separately deployed PostgreSQL, Qdrant, Redis, nginx, and optional Dozzle containers in the current Compose stack (`docker-compose.yml:1-83`).
-- Request lifecycle: FastAPI route -> dependency-injected `ServiceContainer` -> ingestion, retrieval, research-agent, or evaluation service -> SQL/filesystem/vector backends and optional external HTTP adapters (`app/core/lifecycle.py:34-140`, `app/api/routes/`).
-- Background processing model: no separate application worker is present; ingestion jobs are recorded but executed by `IngestionService` in the API runtime (`app/ingestion/service.py:20-162`, `app/db/models.py:70-91`).
-- Deployment model: a single API image under Docker Compose, fronted by nginx, with host-published ports for the API and data services (`Dockerfile:30`, `docker-compose.yml:1-83`). A direct SQLite/filesystem development mode is also documented (`README.md:84-90`).
-- Confidence: high for repository topology; medium for deployed topology outside Compose.
+- Primary language/framework: Python 3.11 container runtime, FastAPI, Pydantic Settings, async SQLAlchemy, LangGraph, PyMuPDF/PaddleOCR, Qdrant, text-embeddings-inference, and llama.cpp (`Dockerfile`, `pyproject.toml`, `app/main.py:create_app`).
+- Topology: modular monolith split into API and ingestion-worker processes, with separate local model and vector services; optional PostgreSQL/pgvector and Dozzle profiles (`docker-compose.yml`, `app/core/lifecycle.py:build_container`).
+- Request lifecycle: HTTP -> observability/auth/rate middleware -> FastAPI route -> shared service container -> retrieval/agent/evaluation service -> SQLite/filesystem/Qdrant/local model HTTP (`app/main.py:create_app`, `app/core/lifecycle.py:build_container`).
+- Background processing model: a durable SQLite job table is polled by one sequential worker; each claimed job runs load -> normalize -> chunk -> embed -> persist -> vector/sparse writes (`app/ingestion/worker.py:run_worker`, `app/ingestion/service.py:_process_job`).
+- Deployment model: Docker Compose with only the API published on loopback; model and data services use an internal network. The default stack sets per-service memory/CPU limits and restart policies (`docker-compose.yml`).
+- Confidence: high for code and Compose topology; medium for hardware capacity because no representative models/corpus were provisioned and no live Compose benchmark could be run in this environment.
 
 ## Component inventory
 
 | Component | Type | Responsibility | Key files | Owned state | Dependencies | Confidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| FastAPI application | API/runtime | Routes, lifecycle, dependency injection, middleware | `app/main.py`, `app/core/lifecycle.py`, `app/api/routes/` | Process-local service container | All application services | High |
-| Ingestion | Domain module | Load, normalize, chunk, embed, persist, and index documents | `app/ingestion/service.py`, `loaders.py`, `chunker.py`, `embedder.py` | Ingestion jobs, documents, chunks, raw text, sparse index, vectors | SQL, filesystem, pgvector, Qdrant, model APIs | High |
-| Retrieval | Domain module | Dense/sparse retrieval, backend routing, fusion, reranking, explanation | `app/retrieval/service.py`, `repository.py`, `reranker.py` | Reads chunks and indexes | SQL, Qdrant, embedder, sparse index | High |
-| Research agent | Domain module | Query planning, retrieval, optional tools, answer generation, citation checks, session persistence | `app/agents/service.py`, `generation.py`, `session_store.py`, `prompts.py` | Research sessions and trace/citation state | Retrieval, SQL, Tavily, Python sandbox, answer provider | High |
-| Evaluation | Domain module/admin API | Dataset runs, quality thresholds, optional RAGAS evaluation | `app/evaluation/`, `app/api/routes/admin_evaluation.py` | Evaluation artifacts and run state | Research service, optional hosted evaluator | High |
-| SQL persistence | Infrastructure adapter | Durable application records and session state | `app/db/models.py`, `session.py`, `base.py` | Documents, chunks, jobs, research sessions | SQLite or PostgreSQL | High |
-| Object storage | Infrastructure adapter | Persist canonical/raw document text | `app/ingestion/object_store.py` | Files under `OBJECT_STORAGE_PATH` | Local filesystem | High |
-| Vector storage | Infrastructure adapters | Store/query dense vectors | `app/ingestion/vector_writers.py`, `app/retrieval/service.py` | pgvector table and/or Qdrant collection | PostgreSQL, Qdrant HTTP API | High |
-| Sparse index | Infrastructure adapter | Local lexical retrieval | `app/ingestion/sparse_index.py` | JSON index file | Local filesystem | High |
-| Observability/security middleware | Cross-cutting | Metrics, trace IDs, API-key and rate-limit controls | `app/observability/`, `app/core/security.py` | In-memory metrics/rate buckets | FastAPI process | Medium |
-| Compose infrastructure | Deployment | API proxying, relational/vector stores, unused/incipient cache, logs | `docker-compose.yml`, `nginx/nginx.conf` | Named volumes and container logs | Docker | High |
+| API | Runtime/API | Research, ingestion administration, evaluation, health, metrics | `app/main.py`, `app/api/routes/`, `app/core/lifecycle.py` | In-process metrics, rate buckets, service graph | Every application service | High |
+| Document worker | Runtime/worker | Claims durable jobs and runs one ingestion pipeline | `app/ingestion/worker.py`, `service.py`, `repository.py` | Job leases/progress in SQLite | Parser/OCR, embedding, Qdrant, sparse index | High |
+| Local loader/OCR | CPU/RAM-heavy adapter | Loads text, JSON, JSONL, PDF, DOCX, images; selectively OCRs | `app/ingestion/loaders.py`, `ocr.py` | Structured documents and temporary page images | PyMuPDF, PaddleOCR, Tesseract | High |
+| Embedding service | Model service | Produces 1,024-dimensional Qwen3 embeddings in bounded HTTP batches | `app/ingestion/embedder.py`, `docker-compose.yml:embedding` | Model weights/runtime cache | TEI CPU image, local model files | High |
+| Answer service | Model service | Generates grounded JSON answers through llama.cpp | `app/agents/generation.py:LlamaCppAnswerGenerator`, `docker-compose.yml:llm` | Phi-4-mini weights and KV cache | llama.cpp, local GGUF | High |
+| Retrieval | Domain service | Dense/sparse/hybrid search and heuristic/optional cross-encoder reranking | `app/retrieval/service.py`, `repository.py`, `reranker.py` | Reads SQL, sparse index, Qdrant | Embedder, Qdrant, SQLite | High |
+| Qdrant | Vector store | Dense vector persistence and nearest-neighbor search | `app/ingestion/vector_writers.py`, `app/retrieval/service.py:QdrantDenseRetriever` | Vector collection and payload | Local disk/RAM | High |
+| SQLite | Relational store/queue | Documents, chunks, sessions, ingestion jobs and leases | `app/db/models.py`, `session.py`, `ingestion/repository.py` | `citebot.db` plus WAL | Local filesystem | High |
+| Sparse index | SQLite FTS5 index | Transactional lexical retrieval | `app/ingestion/sparse_index.py` | SQLite FTS5 metadata/text tables | Local filesystem | High |
+| Observability/security | Cross-cutting | Trace IDs, request logs, in-memory metrics, API-key hooks, rate buckets | `app/observability/`, `app/core/security.py` | Process-local counters/deques | FastAPI | High |
 
 ## Primary request and async flows
 
-### Document ingestion
-- Entrypoint: admin ingestion route or `citebot-ingest` CLI (`app/api/routes/admin_ingestion.py:25`, `pyproject.toml:26-27`).
-- Modules involved: loader -> normalizer -> chunker -> embedder -> repository/object store/sparse index/vector writers (`app/ingestion/service.py:20-162`).
-- State stores touched: SQL document/chunk/job records, local raw-text storage, JSON sparse index, and optionally pgvector/Qdrant.
-- External services called: OpenAI or Gemini embeddings when selected; Qdrant over HTTP when enabled (`app/ingestion/embedder.py:58-143`, `app/ingestion/vector_writers.py:113-184`).
-- Async work produced or consumed: job records exist, but no independent queue/worker boundary was found.
-- Trust boundaries crossed: admin API/CLI input, local file paths and file contents, optional hosted embedding APIs, and vector-store HTTP.
-- Blast radius: changing the canonical representation or embedding dimension affects loaders, schemas, SQL rows, object storage, sparse indexing, both vector writers, retrieval, citations, evaluation fixtures, and all previously indexed data.
-- Evidence: `app/ingestion/service.py:20-162`, `app/db/models.py:19-91`, `app/ingestion/loaders.py:11-54`.
+### Research query
+- Entrypoint: `POST /api/v1/research/query` or `/query/stream` (`app/api/routes/research.py`).
+- Modules involved: research graph -> query embedding -> Qdrant/sparse retrieval -> fusion/reranking -> llama.cpp -> citation verification -> session persistence.
+- State stores touched: Qdrant, SQLite FTS5, SQLite research sessions/chunks.
+- External services called: local embedding and LLM HTTP services; public web search is disabled by the offline Compose default.
+- Async work produced or consumed: request-scoped async work only; `LlamaCppAnswerGenerator` gates calls with an in-process semaphore configured to 1.
+- Trust boundaries crossed: client input, API-key boundary, local model HTTP, stored session context.
+- Blast radius: concurrent queries contend for the single LLM and embedding CPU budget; fallback retrieval can additionally load and re-embed every SQL chunk.
+- Evidence: `app/agents/service.py`, `app/agents/generation.py:LlamaCppAnswerGenerator.generate`, `app/retrieval/service.py:RetrievalService.search`.
 - Confidence: high.
 
-### Research query and answer generation
-- Entrypoint: `POST /api/v1/research/query` and streaming variant (`app/api/routes/research.py:26-39`).
-- Modules involved: research graph, session store, retrieval service, optional web/Python tools, answer generator, citation verifier (`app/agents/service.py`, `app/tools/`, `app/agents/generation.py`).
-- State stores touched: SQL-backed research session state and retrieval indexes.
-- External services called: OpenAI or Gemini for answers and Tavily for optional web enrichment when configured (`app/agents/generation.py:37-133`, `app/tools/web_search.py:28-147`).
-- Async work produced or consumed: request-scoped async graph operations; no external queue.
-- Trust boundaries crossed: public/local client input, persisted conversation state, optional hosted APIs, and local Python subprocess execution when enabled.
-- Blast radius: local-only enforcement affects query classification, web-tool construction, answer-generation adapters, configuration validation, evaluation, streaming error handling, and documentation.
-- Evidence: `docs/architecture/system-design.md:32-40`, `app/agents/service.py:89-617`, `app/core/config.py:70-145`.
+### Queued document ingestion
+- Entrypoint: admin job creation or CLI -> SQLite queue -> `citebot-worker`.
+- Modules involved: `LocalCorpusLoader` -> normalizer -> chunker -> embedder -> object/structured stores -> SQLite -> Qdrant -> sparse index.
+- State stores touched: source files, raw/structured document files, SQLite, Qdrant, SQLite FTS5.
+- External services called: local embedding service and Qdrant; OCR runs in the worker process.
+- Async work produced or consumed: one worker claims one job and processes documents serially, with leases/heartbeats/retries.
+- Trust boundaries crossed: user-selected paths and document content, parser/OCR libraries, local service HTTP.
+- Blast radius: bulk OCR competes with both model services for CPU/RAM; a worker crash can leave SQL/vector/sparse stores partially updated for the current document.
+- Evidence: `app/ingestion/worker.py:run_worker`, `app/ingestion/service.py:_process_job`, `app/ingestion/repository.py:claim_next_job`.
 - Confidence: high.
 
-### Hybrid retrieval
-- Entrypoint: research graph or admin search route (`app/api/routes/admin_ingestion.py:55`, `app/retrieval/service.py:270`).
-- Modules involved: embedder, local/pgvector/Qdrant dense backends, sparse index, fusion, reranker.
-- State stores touched: SQL chunks, pgvector table, Qdrant collection, sparse-index file.
-- External services called: Qdrant over local HTTP; a hosted embedding API can currently be called for query embeddings.
-- Async work produced or consumed: none beyond request-scoped async I/O.
-- Trust boundaries crossed: query/filter input and vector-store HTTP boundary.
-- Blast radius: model or dimension changes require re-embedding and a versioned vector collection; backend-default changes affect readiness and retrieval explanations.
-- Evidence: `app/retrieval/service.py:25-401`, `app/retrieval/reranker.py:13-156`, `app/core/config.py:36-69`.
+### Sparse and degraded dense retrieval
+- Entrypoint: hybrid retrieval or Qdrant/pgvector fallback.
+- Modules involved: `SparseIndex`, `RetrievalRepository`, `LocalDenseRetriever`.
+- State stores touched: SQLite FTS5 result rows or bounded SQL candidates for explicit local fallback.
+- External services called: local embedding service when dense fallback is used.
+- Async work produced or consumed: serial batch search; no separate queue.
+- Trust boundaries crossed: stored document text is sent to the local embedding service.
+- Blast radius: FTS remains bounded by result count; explicit local fallback is capped and automatic fallback is disabled in the offline Compose profile.
+- Evidence: `app/ingestion/sparse_index.py:_search_sync`, `SparseIndex.search`, `app/retrieval/service.py:LocalDenseRetriever.search`, `app/retrieval/repository.py:list_chunks`.
 - Confidence: high.
 
 ## State stores and data ownership
 
 | Store/model/table | Owner or module | Used by | Access pattern | Coupling/risk | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| `documents` / `chunks` | Ingestion/DB | Ingestion, retrieval, citations | SQL writes during ingestion; reads during retrieval | Current chunk fields preserve page/section/offsets but not structured elements, bounding boxes, extraction method, or OCR confidence | `app/db/models.py:19-67` |
-| `ingestion_jobs` | Ingestion | Admin API/CLI | Create/update/read job summaries | Records status but does not form a durable worker queue | `app/db/models.py:70-91`, `app/ingestion/service.py:56-152` |
-| `research_sessions` | Research agent | Query/replay/evaluation | Upsert and replay JSON state | User/tenant ownership is not represented in the model | `app/db/models.py:94-104`, `app/agents/session_store.py:11-49` |
-| Raw/normalized document files | Ingestion object store | Ingestion/citation support | Local filesystem writes by document ID | Local permissions, backup, deletion, and encryption policy are operational dependencies | `app/ingestion/object_store.py:6-24` |
-| Sparse JSON index | Ingestion/retrieval | Hybrid retrieval | Process-local file update/read | Single-file concurrency and crash consistency need validation before a worker split | `app/core/config.py:32-35`, `app/ingestion/sparse_index.py` |
-| pgvector embeddings | Ingestion/retrieval | Dense retrieval | SQL upsert and broad read for application-side scoring | Optional duplicate vector ownership alongside Qdrant; dimension is schema-coupled | `app/ingestion/vector_writers.py:14-111`, `app/retrieval/service.py:73-159` |
-| Qdrant collection | Ingestion/retrieval | Dense retrieval | HTTP collection creation, upsert, search | Collection dimension and embedding version require coordinated migration | `app/ingestion/vector_writers.py:113-184`, `app/retrieval/service.py:161-239` |
+| SQLite documents/chunks/sessions | DB/domain repositories | Ingestion, retrieval, agent | WAL-backed async transactions | Suitable for one worker/small query load; long writes and multi-process contention still need measurement | `app/db/session.py:initialize`, `app/db/models.py` |
+| SQLite ingestion jobs | Ingestion repository | API and worker | Atomic claim, lease, heartbeat, retry | Strong single-host queue foundation; no global scheduler/admission policy | `app/ingestion/repository.py`, `app/ingestion/worker.py` |
+| SQLite FTS5 sparse index | `SparseIndex` | Worker and API | Indexed MATCH query; transactional document replacement | Requires SQLite FTS5 support; sibling legacy JSON is retained for migration | `app/ingestion/sparse_index.py` |
+| Qdrant collection | Vector adapters | Worker and retrieval | HTTP upsert/search | 1,024 float32 values are about 4 KiB/chunk before HNSW/payload overhead; resident usage grows materially with corpus | `app/core/config.py:embedding_dimension`, `app/ingestion/vector_writers.py:QdrantWriter` |
+| Raw/structured documents | Object store | Ingestion and provenance | Atomic structured writes/local filesystem | Disk capacity and backup are operational dependencies | `app/ingestion/object_store.py` |
+| Model artifacts | Provisioning/runtime | Embedding, LLM, OCR | Read-only bind mount verified by manifest | Actual sizes are absent now, so RAM/disk claims require post-provision measurement | `models/README.md`, `models/manifest.lock.example.json`, `app/core/model_manifest.py` |
 
 ## External dependencies
 
 | Dependency | Purpose | Call sites/config | Sync or async | Failure impact | Boundary/adapter | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| OpenAI API | Embeddings, answers, evaluation | `OPENAI_API_KEY`, embedder/generator/evaluator | Async HTTP | Ingestion/query/evaluation failure when selected | Dedicated classes, but hard-coded public URLs | `app/ingestion/embedder.py:58-80`, `app/agents/generation.py:37-71` |
-| Gemini API | Embeddings, answers, evaluation | `GEMINI_API_KEY`, provider settings | Async HTTP | Same as OpenAI | Dedicated classes | `app/ingestion/embedder.py:82-120`, `app/agents/generation.py:73-113` |
-| Tavily | Optional web search | `TAVILY_*` settings | Async HTTP with retry | Optional enrichment degrades/fails | `BaseWebSearchTool` adapter | `app/tools/web_search.py:15-147`, `app/core/config.py:120-134` |
-| Qdrant | Dense vector storage/search | `QDRANT_URL`, `ENABLE_QDRANT` | Async HTTP | Dense retrieval/index writes fail; current routing can fall back locally | Writer/retriever adapters | `app/ingestion/vector_writers.py:113-184`, `app/retrieval/service.py:161-239` |
-| PostgreSQL/pgvector | SQL persistence and optional vector index | `DATABASE_URL`, `ENABLE_PGVECTOR` | Async SQL | Readiness and durable state fail; SQLite can be used in local mode | SQLAlchemy/session and writer/retriever adapters | `app/db/session.py`, `app/ingestion/vector_writers.py:14-111` |
-| Redis | Compose service | Compose only | Unknown | No application failure found from repository evidence | No application adapter found | `docker-compose.yml:30`, `docker-compose.yml:76-80` |
-| Corpus source APIs | Offline corpus acquisition scripts | `scripts/download_corpus.py`, `scripts/arxiv_pdf_parser.py` | Synchronous HTTP | Dataset acquisition fails; deployed RAG runtime need not depend on them | Script boundary only | `scripts/download_corpus.py`, `scripts/arxiv_pdf_parser.py:32-42` |
+| llama.cpp server | Local answer generation | `LLM_BASE_URL`, Compose `llm` | Async HTTP | Research generation fails or queues behind semaphore | `LlamaCppAnswerGenerator` | `app/agents/generation.py` |
+| TEI embedding server | Local embeddings | `EMBEDDING_BASE_URL`, Compose `embedding` | Async HTTP, batches | Ingestion and dense/hybrid query fail | `LocalHttpEmbedder` | `app/ingestion/embedder.py` |
+| Qdrant | Dense storage/search | `QDRANT_URL`, `ENABLE_QDRANT` | Async HTTP | Compose fails degraded rather than triggering full-corpus local re-embedding; explicit local mode is capped | Writer/retriever adapters | `app/retrieval/service.py:_backend_order` |
+| PaddleOCR/Tesseract | OCR | `OCR_*` settings | In worker process | Job slows/fails; CPU/RAM spike | OCR engine classes | `app/ingestion/ocr.py`, `loaders.py:_ocr_blocks` |
+| PostgreSQL/pgvector | Optional alternate persistence/vector path | Compose `postgres` profile | Async SQL | No default-stack impact | SQLAlchemy/pgvector adapters | `docker-compose.yml:postgres`, `app/ingestion/vector_writers.py` |
+| OpenAI/Gemini/Tavily | Development-mode optional providers | Provider factories | Async HTTP | Disabled in `RUNTIME_MODE=offline` | Dedicated adapters | `app/core/config.py`, `app/agents/generation.py`, `app/tools/web_search.py` |
 
 ## Trust boundaries
-- Inbound clients and public APIs: health, research, ingestion-admin, and evaluation-admin routes. Compose currently binds API/nginx and backing-service ports to the host (`app/api/routes/`, `docker-compose.yml:23-80`).
-- Auth/session boundaries: optional research/admin API keys and in-memory request-rate buckets exist, but research sessions do not contain a user or tenant owner (`app/core/config.py:102-115`, `app/db/models.py:94-104`).
-- Admin/internal boundaries: ingestion and evaluation are separate admin routers, but local-only deployment still needs loopback binding and explicit admin-key behavior if LAN exposure is enabled.
-- Tenant/data isolation boundaries: no tenant model or per-tenant index/storage namespace was observed. The present design should be treated as single-user/single-trust-domain.
+- Inbound clients and public APIs: the API is loopback-published by Compose, but research/admin API keys default to unset. Treat this as single-user only unless keys and a trusted proxy are configured (`docker-compose.yml`, `app/core/config.py`).
+- Auth/session boundaries: API-key scopes exist; sessions have no user/tenant owner. Do not expose the system to multiple mutually untrusted users (`app/core/security.py`, `app/db/models.py`).
+- Admin/internal boundaries: ingestion and evaluation routes can trigger high-cost work; the 16 GB Compose profile defaults to 10 admin requests per minute.
+- Tenant/data isolation boundaries: no tenant isolation is present.
 - Webhook or third-party callback boundaries: none observed.
-- File/object storage boundaries: arbitrary local paths supplied to admin ingestion/CLI cross into parser and storage code; upload-size, MIME, page-count, and decompression limits are not represented in current evidence.
-- Queue/cache boundaries: no application queue was found. Rate limiting and metrics are in process; the Redis container does not appear integrated.
+- File/object storage boundaries: loader size is capped at 50 MB per source file and PDFs at 500 pages, but decompressed JSON, pixel buffers, recursive directory totals, and document counts are not bounded (`app/core/config.py`, `app/ingestion/loaders.py:load`).
+- Queue/cache boundaries: SQLite is the durable queue. Metrics and rate limits are API-process local. The sparse index is shared by API and worker without an inter-process coordination mechanism.
 
 ## Architectural strengths
-- Provider construction is centralized behind embedder, reranker, generator, vector-writer, and web-tool interfaces, which gives the pivot natural adapter seams (`app/core/lifecycle.py:58-130`).
-- SQL models already preserve source URI, content hash, page, section, character offsets, model/version metadata, and location markers needed as a base for traceable citations (`app/db/models.py:19-67`).
-- Retrieval already supports Qdrant, local fallback, hybrid fusion, reranking, filters, and backend explanation (`app/retrieval/service.py:239-495`).
-- Configuration is centralized and validated at startup (`app/core/config.py:10-371`).
-- Health/readiness, trace IDs, metrics, API-key hooks, and bounded external HTTP timeouts already exist (`app/api/routes/health.py`, `app/observability/`, `app/core/security.py`).
+- Expensive ingestion is already separated from the API by a durable leased SQLite queue and a single sequential worker (`app/ingestion/worker.py`, `app/ingestion/repository.py`).
+- Generation concurrency is explicitly bounded with a semaphore, and embedding calls are batched (`app/agents/generation.py:LlamaCppAnswerGenerator`, `app/ingestion/embedder.py:LocalHttpEmbedder`).
+- SQLite WAL and busy timeout reduce basic API/worker contention (`app/db/session.py:initialize`).
+- Model artifacts are offline, manifest-verified, and mounted read-only; internal services are not host-published (`models/README.md`, `docker-compose.yml`).
+- Health/readiness checks cover SQLite, Qdrant, embedding, and LLM dependencies (`app/core/health.py:HealthService.readiness`).
+- Provider adapters and the central service container make resource-oriented changes localized rather than rewrite-scale (`app/core/lifecycle.py:build_container`).
+- Targeted capacity/config/retrieval checks pass: 17 tests passed in the clean non-DB subset and `python -m ruff check app tests` passes. The full DB-backed suite remains blocked in this sandbox by a standalone `aiosqlite` connection stall and must be rerun in the normal runtime.
 
 ## Architectural risks
 
-### LOC-01: `local` currently means deterministic test doubles
-- Severity: blocker
-- Category: dependency
-- Evidence: `LocalEmbedder` generates repeatable pseudo-vectors and `LocalAnswerGenerator` emits deterministic answers (`app/ingestion/embedder.py:24-56`, `app/agents/generation.py:28-35`).
-- Why it matters: retaining these as the production defaults would claim local RAG capability without real semantic embedding or grounded model generation.
-- Likely blast radius: configuration, provider factories, ingestion/reindexing, retrieval quality, research answers, tests, evaluation, Compose, and docs.
-- Recommended action: rename deterministic providers to `test`, add explicit local HTTP/model-runtime adapters, and reject test providers outside test/development.
-- Confidence: high.
-
-### LOC-02: Deployed runtime can still call public APIs
-- Severity: blocker
-- Category: trust boundary
-- Evidence: hosted provider choices and Tavily are accepted in settings and use hard-coded public endpoints (`app/core/config.py:36-46`, `70-75`, `120-134`, `223-247`; `app/agents/generation.py:37-113`; `app/tools/web_search.py:28-147`).
-- Why it matters: API-key absence is not equivalent to a fail-closed offline guarantee, and an environment change can silently move private content outside the machine.
-- Likely blast radius: configuration, provider factories, research planning, evaluation, container networking, CI, and release documentation.
-- Recommended action: introduce a fail-closed runtime network policy, remove hosted providers from the deployed image/config contract, separate networked corpus bootstrap tooling, and run application services on an internal Docker network.
-- Confidence: high.
-
-### LOC-03: Current schema cannot preserve serious OCR structure
+### CAP-01: Resource caps need real-host calibration
 - Severity: high
-- Category: data ownership
-- Evidence: chunks store flat text, offsets, optional section/page/location, but no page element type, bounding box, extraction method, OCR confidence, or table representation (`app/db/models.py:45-67`). Loaders currently focus on text/JSON corpora (`app/ingestion/loaders.py:11-54`).
-- Why it matters: flattening complex pages weakens citations, table retrieval, quality diagnostics, and selective fallback decisions.
-- Likely blast radius: canonical schemas, migrations, object storage, chunker, vector payloads, retrieval results, citation verifier, API contracts, and evaluation fixtures.
-- Recommended action: add a versioned structured-document model and structure-aware chunk provenance before integrating OCR.
-- Confidence: high.
+- Category: deployment
+- Evidence: Compose now defines 1 GB API, 2 GB worker, 2.5 GB embedding, 5 GB LLM, and 2 GB Qdrant limits with restart policies; the exact model RSS has not been measured (`docker-compose.yml`).
+- Why it matters: the kernel, Docker, LLM weights/KV cache, embedding model, OCR, Qdrant, API, worker, and filesystem cache can exceed 16 GB when ingestion and queries overlap.
+- Likely blast radius: host swapping/OOM, all services, SQLite job progress, and user latency.
+- Recommended action: validate the aggregate 12.5 GB starting ceiling with provisioned models, leave 2-3 GB available to the host, and tune only from RSS/PSS, swap, latency, and restart measurements. Add host OOM alerts.
+- Confidence: high that limits are configured; medium for capacity until models are provisioned.
 
-### LOC-04: Embedding cutover requires a coordinated reindex
-- Severity: high
-- Category: data ownership
-- Evidence: the current default dimension is 32 and vector dimensions are embedded in pgvector/Qdrant initialization (`app/core/config.py:40`, `app/ingestion/vector_writers.py:29-45`, `136-151`).
-- Why it matters: Qwen3 embeddings cannot be written into or queried against the existing collection safely; partial cutover can return invalid or incomparable results.
-- Likely blast radius: every embedding row/point, collection naming, readiness, filters, evaluation baselines, and rollback.
-- Recommended action: create a new versioned collection/index, dual-read only for validation, atomically switch the active alias/config, and retain the prior index until acceptance gates pass.
-- Confidence: high.
-
-### LOC-05: CPU/RAM-heavy work has no isolation or backpressure
+### CAP-02: Default LLM context is aggressive for 16 GB CPU-only operation
 - Severity: high
 - Category: operations
-- Evidence: no worker service or queue consumer was found; ingestion is owned by the API service while Compose includes Redis without an application client (`app/ingestion/service.py:20-162`, `docker-compose.yml:76-80`).
-- Why it matters: OCR, embedding, and model generation can overlap and exhaust a 16 GB CPU-only host, taking down the API or corrupting in-flight jobs.
-- Likely blast radius: API latency/readiness, ingestion state, local model services, Qdrant, and host stability.
-- Recommended action: use a durable SQLite-backed job queue and a separate document worker with OCR concurrency 1, bounded embedding batches, and an API-side generation semaphore of 1 by default.
+- Evidence: settings, `.env.example`, and Compose default `LLM_CONTEXT_TOKENS=4096`; generation concurrency and research admission are 1 active request with two waiting slots (`app/core/config.py`, `docker-compose.yml`, `app/core/admission.py`).
+- Why it matters: KV cache grows with context and can consume substantial memory in addition to model weights; longer prompts also increase CPU latency.
+- Likely blast radius: LLM RSS, first-token latency, request timeout, and host headroom.
+- Recommended action: keep 4,096 as the default, expose 8,192 only as an opt-in profile that passes a soak test, and benchmark the exact i7 with explicit model thread environment variables.
 - Confidence: high.
 
-### LOC-06: Default Compose exposure is broader than a private laptop needs
+### CAP-03: Large single-file parsing still needs a ceiling
+- Severity: high
+- Category: operations
+- Evidence: worker processing now consumes `LocalCorpusLoader.iter_load`, JSONL is line-streamed, and per-file/total byte, document, and PDF-page budgets are enforced; a single JSON array is still parsed as one bounded file (`app/ingestion/loaders.py`, `app/ingestion/service.py:_process_job`).
+- Why it matters: a directory of individually valid files can exceed memory even though each file is below 50 MB.
+- Likely blast radius: worker OOM, job retries, API/LLM eviction, and partial indexing.
+- Recommended action: keep the 25 MB/file, 100-page, 500-document, and 512 MB total defaults; add an incremental parser or explicit JSON-array size warning if larger JSON files become common.
+- Confidence: high.
+
+### CAP-04: Sparse index migration and rebuildability need operational coverage
+- Severity: high
+- Category: data ownership
+- Evidence: sparse retrieval now uses SQLite FTS5 MATCH queries and transactional document replacement; legacy JSON is read only for one-time migration (`app/ingestion/sparse_index.py`).
+- Why it matters: this will become the dominant latency, RAM, and write-amplification path well before Qdrant reaches its useful capacity.
+- Likely blast radius: hybrid query latency, worker/API races, index corruption after interrupted writes, and disk wear.
+- Recommended action: add a rebuild/reconciliation command and test migration/recovery after process termination; retain the legacy JSON until the SQLite file is verified.
+- Confidence: high.
+
+### CAP-05: Dense fallback turns a dependency failure into a load spike
+- Severity: high
+- Category: dependency
+- Evidence: `LocalDenseRetriever.search` is limited to `MAX_LOCAL_DENSE_CANDIDATES`; `ALLOW_LOCAL_DENSE_FALLBACK=false` in Compose removes it from automatic backend order (`app/retrieval/service.py`, `app/core/config.py`, `docker-compose.yml`).
+- Why it matters: when Qdrant is unhealthy, the API can simultaneously increase SQLite, embedding, CPU, network, and memory load.
+- Likely blast radius: embedding service saturation and system-wide latency/OOM.
+- Recommended action: keep automatic fallback disabled in offline deployments, return degraded retrieval when Qdrant is unavailable, and use explicit local mode only for small test corpora below the hard candidate cap.
+- Confidence: high.
+
+### CAP-06: Qdrant capacity still needs a corpus benchmark
 - Severity: medium
-- Category: deployment
-- Evidence: API and backing services define host port mappings (`docker-compose.yml:23-80`), while the target draft only requires the API on loopback.
-- Why it matters: Qdrant, Redis, PostgreSQL, log viewers, or the API may be reachable from unintended interfaces depending on Docker/host configuration.
-- Likely blast radius: all stored documents, vectors, sessions, and logs.
-- Recommended action: publish only `127.0.0.1:${CITEBOT_PORT}:8000` by default, remove host ports from internal services, and put all service-to-service traffic on an `internal: true` network.
+- Category: data ownership
+- Evidence: embeddings are 1,024-dimensional and Qdrant now has a 2 GB Compose limit, but collection growth/on-disk vector behavior has not been benchmarked (`app/core/config.py`, `docker-compose.yml:qdrant`).
+- Why it matters: raw float32 vectors alone use about 195 MiB/50k, 391 MiB/100k, 977 MiB/250k, 1.91 GiB/500k, and 3.81 GiB/1M chunks, before HNSW, payload, allocator, and cache overhead.
+- Likely blast radius: Qdrant RSS, disk, startup time, retrieval latency, and host headroom.
+- Recommended action: use 250k chunks as the initial 16 GB ceiling, alert at 70/85% of the measured Qdrant budget, and test on-disk vectors/payload or quantization before exceeding it. Do not run the optional PostgreSQL/pgvector profile concurrently on this host unless measured.
+- Confidence: high for raw-vector arithmetic; medium for total Qdrant usage.
+
+### CAP-07: Host-level capacity metrics are still required
+- Severity: medium
+- Category: operations
+- Evidence: research/admin limits default to 30/10 requests per minute, research admission is bounded to one active plus two waiting, and process peak RSS is exposed; host/container/model metrics remain outside the app (`app/core/config.py`, `app/core/admission.py`, `app/observability/metrics.py`).
+- Why it matters: a burst can build an unbounded LLM wait queue, while operators cannot see resource exhaustion early.
+- Likely blast radius: query timeouts, memory retained by waiting requests, delayed ingestion, and poor diagnosis.
+- Recommended action: retain the bounded app controls, add host/container/model/queue/stage metrics with retention outside process memory, and alert on queue age, RSS, swap, and OOM/restart events.
 - Confidence: high.
 
 ## Operational maturity observations
-- Health/readiness: health, readiness, version, and metrics routes exist; readiness checks SQL and optionally Qdrant (`app/api/routes/health.py`, `app/core/health.py`). Local model and OCR service readiness must be added.
-- Graceful shutdown: the FastAPI lifespan initializes and closes the service container (`app/core/lifecycle.py:46-55`, `132-140`). Worker lease recovery and subprocess/model shutdown are not yet applicable.
-- Config and secrets: environment-based Pydantic settings validate several provider combinations. Local-only URL/host allowlisting and model-artifact validation are absent.
-- Logging: Python logging and trace IDs are present, but document content/redaction policy is not explicit.
-- Metrics/tracing: in-memory metrics exist; no distributed trace backend is required for the proposed single-host system, but cross-service request/job IDs should be propagated.
-- Timeouts/retries: external HTTP calls use bounded timeouts and Tavily retries. Local model/OCR adapters need their own queue, timeout, cancellation, and overload behavior.
-- Rate limiting/backpressure: request rate limiting is process-local; no OCR/embed/generation resource semaphore or durable queue exists.
-- Idempotency: document content hashes, force-reindex flags, and version fields provide a base; job leasing/retry idempotency and partial vector-write recovery need explicit design.
-- Deploy/rollback signals: CI, release docs, health checks, and versioned embedding/index fields exist. There is no model manifest/hash gate or documented vector-index rollback procedure.
+- Health/readiness: dependency checks exist and use two-second local-service timeouts. Add a shallow readiness probe and separate deep diagnostic endpoint so frequent probes do not contend with model inference.
+- Graceful shutdown: API disposes the DB engine; worker cancellation closes its container. The current job lease supports recovery, but per-document multi-store writes are not atomic.
+- Config and secrets: central validation and offline URL allowlisting are strengths. Add a named `hardware-16gb` Compose/env profile so safe limits are reproducible.
+- Logging: request/trace logging exists. Add job stage duration, model queue wait, corpus counts, Qdrant usage, peak RSS, OOM/restart reason, and disk-free logs without document content.
+- Metrics/tracing: in-memory metrics now include peak process RSS and request/rate-limit counters. Host/container RSS/CPU, swap, Qdrant vector count, queue age, model tokens/second, and p50/p95 latency still require host-side collection.
+- Timeouts/retries: model and local HTTP calls have timeouts; ingestion jobs retry. Add retry backoff/jitter and distinguish retryable dependency failure from deterministic parser/model errors.
+- Rate limiting/backpressure: research requests have bounded admission (one active, two waiting), rate limits default to 30 research/10 admin requests per minute, and the worker remains sequential. CPU thread tuning and ingestion-vs-generation scheduling still require measurement.
+- Idempotency: content hashes and leased jobs help. SQL, Qdrant, and sparse updates can still diverge; record stages and make writes replay-safe before automatic retries.
+- Deploy/rollback signals: tests, manifest validation, Compose static parsing, and resource limits exist. Docker startup/model benchmark and vector rollback remain host-only gates.
+
+Suggested initial 16 GB operating profile (measurement targets, not proven guarantees):
+
+| Control | Initial value | Scale-up gate |
+| --- | --- | --- |
+| LLM context | 4,096 tokens | 8,192 only if peak available RAM stays above 2 GB and p95 meets target |
+| Concurrent generations | 1 active, at most 2 waiting | Increase only after a 30-minute mixed-load soak |
+| Ingestion workers/jobs | 1 | Keep at 1 on CPU-only 16 GB host |
+| OCR pages in flight | 1 | Keep at 1; loader currently processes sequentially |
+| Embedding batch | 4 initially; test 8 | Choose best p95/RSS result |
+| Model CPU threads | Start 4-6 per active model; avoid simultaneous full-core pools | Tune to physical cores and thermal behavior |
+| PDF/file limits | 100 pages, 25 MB default | Raise only for an isolated ingestion window |
+| Qdrant corpus | <=250k chunks initially | Larger only with measured RSS and on-disk/quantization evaluation |
+| Swap | Small emergency swap allowed, zero sustained activity | Any sustained swap is a failed capacity test |
+| Free headroom | >=2 GB minimum; >=3 GB preferred at peak | Required before release |
 
 ## Recommended refactoring priorities
-1. Establish and test a fail-closed local-only configuration/network contract; distinguish real local providers from deterministic test doubles.
-2. Add local embedding and llama.cpp-compatible generation adapters behind the current interfaces, with readiness and bounded concurrency.
-3. Introduce a versioned structured-document schema and selective native-text/OCR pipeline before changing chunking.
-4. Split ingestion into a durable SQLite-backed worker flow and enforce single-host resource budgets.
-5. Build a new Qwen3-backed Qdrant index version and perform an evaluation-gated cutover.
-6. Harden Compose for loopback-only access, internal networking, pinned offline model artifacts, and no runtime downloads.
-7. Remove or isolate hosted-provider, Tavily, Redis, pgvector, nginx, and networked corpus tooling that are outside the default local runtime.
+1. Provision and verify the pinned model artifacts, then run the 16 GB Compose profile with 4,096-token context and capture peak RSS, swap, CPU, and thermal behavior.
+2. Add a rebuild/reconciliation command for SQLite FTS5 and test process termination between SQLite, Qdrant, and object-store writes.
+3. Add host/container/model metrics and a 30-minute benchmark gate: cold start, one query, two-query burst, ingestion-only, and mixed ingestion/query load.
+4. Reassess the 250k chunk ceiling with the real corpus; evaluate Qdrant on-disk vectors/quantization only after relevance and latency comparison.
 
 ## Unknowns and confidence
-- Unknown: whether the target is strictly single-user or may later be exposed to a LAN. Why it matters: session ownership, auth, TLS, and tenant isolation requirements change substantially. How to verify safely: confirm deployment scope before enabling any non-loopback bind; the plan defaults to single-user loopback-only.
-- Unknown: exact 16 GB host CPU instruction set, OS, and acceptable query latency. Why it matters: llama.cpp image/flags, quantization, context size, and OCR throughput depend on them. How to verify safely: add a preflight command and benchmark gate before freezing runtime defaults.
-- Unknown: licensing/redistribution policy for bundled model artifacts. Why it matters: prebuilt offline images may redistribute large third-party weights. How to verify safely: record model licenses and hashes in a reviewed manifest before release packaging.
-- Unknown: required languages and prevalence of tables/scans. Why it matters: OCR language packs, confidence thresholds, and evaluation corpus selection depend on actual documents. How to verify safely: build a redacted representative document fixture set and measure native extraction coverage and OCR fallback rate.
-- Unknown: whether existing indexed data must be preserved. Why it matters: the embedding and canonical-schema changes require a full reindex. How to verify safely: inventory current volumes and retain an export plus the old collection until the cutover is accepted.
-
+- Unknown: exact Core i7 generation, physical-core count, AVX/AVX2/AVX-512 support, thermal envelope, and storage type. Why it matters: llama.cpp/TEI throughput can vary by multiples. How to verify safely: record `lscpu`, disk type, and sustained temperature/clock behavior on the target host, then benchmark the pinned images.
+- Unknown: provisioned model artifact sizes and actual process RSS. Why it matters: the repository currently contains only manifest examples. How to verify safely: provision and verify models, then capture idle, single-query, full-context, OCR, and mixed-load RSS/PSS.
+- Unknown: normal document mix, scan rate, languages, average chunks/document, and total corpus target. Why it matters: OCR cost and Qdrant/sparse capacity depend on these values. How to verify safely: build a redacted representative corpus and report chunk/OCR distributions before setting final limits.
+- Unknown: acceptable latency and concurrent-user SLO. Why it matters: “smoothly” could mean one patient local user or several interactive clients. How to verify safely: define first-token/full-answer/retrieval p95 and maximum queue wait; the recommendations assume one active user and occasional second requests.
+- Unknown: real Compose startup and runtime behavior. Why it matters: Docker is unavailable in this analysis environment, and model artifacts are not provisioned. How to verify safely: run `docker compose config`, manifest verification, cold-start, health, benchmark, and 30-minute mixed-load soak on the actual host.
+- Unknown: whether LAN/multi-user exposure is required. Why it matters: current sessions are not tenant-owned and API keys default to unset. How to verify safely: keep loopback-only until an explicit auth/isolation review is completed.

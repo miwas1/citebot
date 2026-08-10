@@ -3,6 +3,7 @@
 ## Scope
 
 - Provide a FastAPI service with health, readiness, version, and admin ingestion endpoints.
+- Provide an integrated responsive workspace for browser uploads, document status, durable conversations, streaming answers, and citation inspection.
 - Support an offline Docker Compose deployment with SQLite, Qdrant, local model services, and a document worker; PostgreSQL/pgvector is optional.
 - Persist canonical document metadata, chunk metadata, and ingestion job state.
 - Preserve source URIs, offsets, and location markers required for citation traceability.

@@ -8,7 +8,7 @@ CORPUS_MERGED      ?= $(CORPUS_OUTPUT_DIR)/interpretability_merged.jsonl
 EVAL_DATASET       ?= data/evaluation_datasets/interpretability_scenario.json
 EVAL_OUTPUT        ?= artifacts/evaluations/interpretability_scenario_result.json
 
-.PHONY: dev-up dev-logs dev-down dev-reset local-setup test lint ingest-sample search-sample benchmark-retrieval integration-retrieval eval-smoke eval-ci models-provision models-verify \
+.PHONY: dev-up dev-logs dev-down dev-reset local-setup test lint ingest-sample search-sample benchmark-retrieval benchmark-16gb integration-retrieval eval-smoke eval-ci models-provision models-verify \
         corpus-download corpus-download-large corpus-download-full \
         ingest-interpretability eval-interpretability eval-interpretability-ragas \
         corpus-stats
@@ -50,6 +50,9 @@ search-sample:
 
 benchmark-retrieval:
 	$(PYTHON) -m app.evaluation.retrieval_harness benchmark --start-compose
+
+benchmark-16gb:
+	$(PYTHON) scripts/benchmark_16gb.py --compose-up --compose-down
 
 integration-retrieval:
 	$(PYTHON) -m app.evaluation.retrieval_harness integration --start-compose

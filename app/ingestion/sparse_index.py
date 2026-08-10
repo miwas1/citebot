@@ -1,11 +1,12 @@
-"""Lightweight persistent BM25-style sparse index for local validation."""
+"""SQLite FTS5 sparse retrieval for the local single-host runtime."""
 
 from __future__ import annotations
 
 import json
-import math
 import re
+import sqlite3
 from pathlib import Path
+from typing import Any
 
 from app.ingestion.schemas import (
     CanonicalDocument,
@@ -16,50 +17,30 @@ from app.ingestion.schemas import (
 
 
 class SparseIndex:
-    """Persist chunk text and run local BM25-style search over the corpus."""
+    """Persist chunk metadata in SQLite and search it through FTS5.
+
+    ``index_path`` remains the public configuration knob for compatibility. A
+    sibling ``.sqlite3`` file is used so an existing JSON index is never
+    overwritten; it is migrated once on first initialization.
+    """
 
     def __init__(self, index_path: Path) -> None:
-        """Store the path used to persist the sparse index payload."""
-
-        self._index_path = index_path
+        self._legacy_path = index_path
+        self._db_path = index_path.with_suffix(".sqlite3")
 
     async def initialize(self) -> None:
-        """Create the sparse index file if it does not already exist."""
+        """Create the FTS schema and migrate a legacy JSON index if present."""
 
-        self._index_path.parent.mkdir(parents=True, exist_ok=True)
-        if not self._index_path.exists():
-            self._index_path.write_text(json.dumps({"chunks": {}}), encoding="utf-8")
+        self._initialize_sync()
 
     async def replace_document_chunks(
         self,
         document: CanonicalDocument,
         chunks: list[ChunkPayload],
     ) -> None:
-        """Replace all sparse index entries for a single document."""
+        """Replace one document atomically in the sparse index."""
 
-        payload = self._read_index()
-        payload["chunks"] = {
-            chunk_id: value
-            for chunk_id, value in payload["chunks"].items()
-            if value["document_id"] != document.document_id
-        }
-        for chunk in chunks:
-            payload["chunks"][chunk.chunk_id] = {
-                "chunk_id": chunk.chunk_id,
-                "document_id": chunk.document_id,
-                "title": chunk.title,
-                "source_uri": chunk.source_uri,
-                "location_marker": chunk.location_marker,
-                "access_policy": document.access_policy,
-                "embedding_version": chunk.embedding_version,
-                "index_version": chunk.index_version,
-                "section": chunk.section,
-                "page": chunk.page,
-                "metadata": document.metadata,
-                "text": chunk.text,
-                "tokens": self._tokenize(chunk.text),
-            }
-        self._write_index(payload)
+        self._replace_document_chunks_sync(document, chunks)
 
     async def search(
         self,
@@ -67,123 +48,293 @@ class SparseIndex:
         top_k: int = 5,
         filters: RetrievalFilters | None = None,
     ) -> list[SearchResult]:
-        """Search indexed chunks using a BM25-style relevance score."""
+        """Search indexed chunks with SQLite FTS5 and bounded result materialization."""
 
-        payload = self._read_index()
-        chunks = [
-            chunk
-            for chunk in payload["chunks"].values()
-            if self._matches_filters(chunk, filters)
-        ]
-        if not chunks:
-            return []
-        query_tokens = self._tokenize(query)
-        if not query_tokens:
-            return []
-        average_length = sum(len(chunk["tokens"]) for chunk in chunks) / len(chunks)
-        results: list[SearchResult] = []
-        for chunk in chunks:
-            score = self._score_chunk(
-                query_tokens, chunk["tokens"], chunks, average_length
-            )
-            if score <= 0:
-                continue
-            results.append(
-                SearchResult(
-                    chunk_id=chunk["chunk_id"],
-                    document_id=chunk["document_id"],
-                    title=chunk["title"],
-                    source_uri=chunk["source_uri"],
-                    location_marker=chunk.get("location_marker"),
-                    score=score,
-                    sparse_score=score,
-                    source_backend="sparse",
-                    metadata={
-                        "access_policy": chunk.get("access_policy", "internal"),
-                        "embedding_version": chunk.get("embedding_version"),
-                        "index_version": chunk.get("index_version"),
-                        "section": chunk.get("section"),
-                        "page": chunk.get("page"),
-                        "document_metadata": chunk.get("metadata", {}),
-                    },
-                    text=chunk["text"],
-                )
-            )
-        return sorted(results, key=lambda item: item.score, reverse=True)[:top_k]
+        return self._search_sync(query, top_k, filters)
 
-    def _matches_filters(
+    def _initialize_sync(self) -> None:
+        """Create schema and migrate legacy content in one short transaction."""
+
+        legacy_chunks: list[dict[str, Any]] = []
+        if self._legacy_path.exists() and not self._db_path.exists():
+            try:
+                payload = json.loads(self._legacy_path.read_text(encoding="utf-8"))
+                chunks = payload.get("chunks", {})
+                if isinstance(chunks, dict):
+                    legacy_chunks = [
+                        value for value in chunks.values() if isinstance(value, dict)
+                    ]
+            except (OSError, json.JSONDecodeError):
+                # A malformed legacy file must not prevent a clean index from
+                # being created; the original file remains available for repair.
+                legacy_chunks = []
+
+        with self._connect() as connection:
+            self._create_schema(connection)
+            if legacy_chunks:
+                for value in legacy_chunks:
+                    self._insert_chunk(connection, value)
+
+    def _replace_document_chunks_sync(
         self,
-        chunk: dict[str, object],
+        document: CanonicalDocument,
+        chunks: list[ChunkPayload],
+    ) -> None:
+        """Execute the delete-and-insert operation under one SQLite transaction."""
+
+        with self._connect() as connection:
+            self._create_schema(connection)
+            connection.execute(
+                "DELETE FROM sparse_chunks_fts WHERE chunk_id IN "
+                "(SELECT chunk_id FROM sparse_chunks WHERE document_id = ?)",
+                (document.document_id,),
+            )
+            connection.execute(
+                "DELETE FROM sparse_chunks WHERE document_id = ?",
+                (document.document_id,),
+            )
+            for chunk in chunks:
+                value = {
+                    "chunk_id": chunk.chunk_id,
+                    "document_id": chunk.document_id,
+                    "title": chunk.title,
+                    "source_uri": chunk.source_uri,
+                    "location_marker": chunk.location_marker,
+                    "access_policy": document.access_policy,
+                    "embedding_version": chunk.embedding_version,
+                    "index_version": chunk.index_version,
+                    "section": chunk.section,
+                    "page": chunk.page,
+                    "metadata": document.metadata,
+                    "text": chunk.text,
+                    "element_ids": chunk.element_ids,
+                    "bbox_refs": chunk.bbox_refs,
+                    "extraction_method": chunk.extraction_method,
+                    "min_confidence": chunk.min_confidence,
+                }
+                self._insert_chunk(connection, value)
+
+    def _search_sync(
+        self,
+        query: str,
+        top_k: int,
         filters: RetrievalFilters | None,
-    ) -> bool:
-        """Return whether a persisted sparse chunk satisfies the requested filters."""
+    ) -> list[SearchResult]:
+        """Run one bounded FTS query and convert rows into API results."""
 
-        if filters is None:
-            return True
-        if (
-            filters.document_ids
-            and chunk.get("document_id") not in filters.document_ids
-        ):
-            return False
-        if filters.source_uris and chunk.get("source_uri") not in filters.source_uris:
-            return False
-        if (
-            filters.access_policies
-            and chunk.get("access_policy", "internal") not in filters.access_policies
-        ):
-            return False
-        if (
-            filters.embedding_version is not None
-            and chunk.get("embedding_version") != filters.embedding_version
-        ):
-            return False
-        if (
-            filters.index_version is not None
-            and chunk.get("index_version") != filters.index_version
-        ):
-            return False
-        return True
-
-    def _score_chunk(
-        self,
-        query_tokens: list[str],
-        document_tokens: list[str],
-        corpus: list[dict[str, object]],
-        average_length: float,
-    ) -> float:
-        """Compute a simple BM25 score for one chunk against the full corpus."""
-
-        k1 = 1.5
-        b = 0.75
-        score = 0.0
-        for term in query_tokens:
-            term_frequency = document_tokens.count(term)
-            if term_frequency == 0:
-                continue
-            document_frequency = sum(1 for item in corpus if term in item["tokens"])
-            numerator = len(corpus) - document_frequency + 0.5
-            denominator = document_frequency + 0.5
-            inverse_document_frequency = math.log(1 + (numerator / denominator))
-            length_ratio = (
-                len(document_tokens) / average_length if average_length else 1.0
+        terms = self._tokenize(query)
+        if not terms:
+            return []
+        match_query = " OR ".join(f'"{term}"' for term in terms)
+        conditions = ["sparse_chunks_fts MATCH ?"]
+        parameters: list[Any] = [match_query]
+        if filters is not None:
+            self._add_filter(
+                conditions,
+                parameters,
+                "c.document_id",
+                filters.document_ids,
             )
-            score += inverse_document_frequency * (
-                (term_frequency * (k1 + 1))
-                / (term_frequency + k1 * (1 - b + (b * length_ratio)))
+            self._add_filter(
+                conditions,
+                parameters,
+                "c.source_uri",
+                filters.source_uris,
             )
-        return score
+            self._add_filter(
+                conditions,
+                parameters,
+                "c.access_policy",
+                filters.access_policies,
+            )
+            if filters.embedding_version is not None:
+                conditions.append("c.embedding_version = ?")
+                parameters.append(filters.embedding_version)
+            if filters.index_version is not None:
+                conditions.append("c.index_version = ?")
+                parameters.append(filters.index_version)
+        parameters.append(max(1, min(top_k, 50)))
+        statement = f"""
+            SELECT
+                c.chunk_id, c.document_id, c.title, c.source_uri,
+                c.location_marker, c.access_policy, c.embedding_version,
+                c.index_version, c.section, c.page, c.metadata_json,
+                c.text, c.element_ids_json, c.bbox_refs_json,
+                c.extraction_method, c.min_confidence,
+                bm25(sparse_chunks_fts) AS rank_score
+            FROM sparse_chunks_fts
+            JOIN sparse_chunks AS c ON c.chunk_id = sparse_chunks_fts.chunk_id
+            WHERE {' AND '.join(conditions)}
+            ORDER BY rank_score ASC
+            LIMIT ?
+        """
+        with self._connect() as connection:
+            rows = connection.execute(statement, parameters).fetchall()
+        return [self._row_to_result(row) for row in rows]
 
-    def _tokenize(self, text: str) -> list[str]:
-        """Tokenize text into lowercase alphanumeric search terms."""
+    def _insert_chunk(self, connection: sqlite3.Connection, value: dict[str, Any]) -> None:
+        """Insert one metadata row and its corresponding FTS row."""
 
-        return re.findall(r"[a-z0-9]+", text.lower())
+        chunk_id = str(value.get("chunk_id", ""))
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO sparse_chunks (
+                chunk_id, document_id, title, source_uri, location_marker,
+                access_policy, embedding_version, index_version, section, page,
+                metadata_json, text, element_ids_json, bbox_refs_json,
+                extraction_method, min_confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                chunk_id,
+                str(value.get("document_id", "")),
+                str(value.get("title", "")),
+                str(value.get("source_uri", "")),
+                value.get("location_marker"),
+                str(value.get("access_policy", "internal")),
+                str(value.get("embedding_version", "")),
+                str(value.get("index_version", "")),
+                value.get("section"),
+                value.get("page"),
+                json.dumps(value.get("metadata", {}), ensure_ascii=False),
+                str(value.get("text", "")),
+                json.dumps(value.get("element_ids", [])),
+                json.dumps(value.get("bbox_refs", [])),
+                value.get("extraction_method"),
+                value.get("min_confidence"),
+            ),
+        )
+        connection.execute(
+            "DELETE FROM sparse_chunks_fts WHERE chunk_id = ?",
+            (chunk_id,),
+        )
+        connection.execute(
+            "INSERT INTO sparse_chunks_fts (chunk_id, title, text) VALUES (?, ?, ?)",
+            (chunk_id, str(value.get("title", "")), str(value.get("text", ""))),
+        )
 
-    def _read_index(self) -> dict[str, dict[str, object]]:
-        """Read the persisted sparse index payload from disk."""
+    def _row_to_result(self, row: sqlite3.Row) -> SearchResult:
+        """Convert one SQLite row into the shared retrieval result contract."""
 
-        return json.loads(self._index_path.read_text(encoding="utf-8"))
+        metadata = self._json_object(row["metadata_json"])
+        score = max(0.0, -float(row["rank_score"]))
+        metadata.update(
+            {
+                "access_policy": row["access_policy"],
+                "embedding_version": row["embedding_version"],
+                "index_version": row["index_version"],
+                "section": row["section"],
+                "page": row["page"],
+                "document_metadata": self._json_object(row["metadata_json"]),
+            }
+        )
+        return SearchResult(
+            chunk_id=row["chunk_id"],
+            document_id=row["document_id"],
+            title=row["title"],
+            source_uri=row["source_uri"],
+            location_marker=row["location_marker"],
+            page=row["page"],
+            element_ids=self._json_list(row["element_ids_json"]),
+            bbox_refs=self._json_boxes(row["bbox_refs_json"]),
+            extraction_method=row["extraction_method"],
+            min_confidence=row["min_confidence"],
+            score=score,
+            sparse_score=score,
+            text=row["text"],
+            source_backend="sparse",
+            metadata=metadata,
+        )
 
-    def _write_index(self, payload: dict[str, object]) -> None:
-        """Persist the sparse index payload back to disk."""
+    def _connect(self) -> sqlite3.Connection:
+        """Open a short-lived WAL connection with a bounded lock wait."""
 
-        self._index_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(self._db_path, timeout=5.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        return connection
+
+    def _create_schema(self, connection: sqlite3.Connection) -> None:
+        """Create ordinary metadata and FTS5 tables if they are absent."""
+
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS sparse_chunks (
+                chunk_id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                source_uri TEXT NOT NULL,
+                location_marker TEXT,
+                access_policy TEXT NOT NULL,
+                embedding_version TEXT NOT NULL,
+                index_version TEXT NOT NULL,
+                section TEXT,
+                page INTEGER,
+                metadata_json TEXT NOT NULL,
+                text TEXT NOT NULL,
+                element_ids_json TEXT NOT NULL,
+                bbox_refs_json TEXT NOT NULL,
+                extraction_method TEXT,
+                min_confidence REAL
+            );
+            CREATE INDEX IF NOT EXISTS sparse_chunks_document_idx
+                ON sparse_chunks(document_id);
+            CREATE VIRTUAL TABLE IF NOT EXISTS sparse_chunks_fts
+                USING fts5(chunk_id UNINDEXED, title, text);
+            """
+        )
+
+    @staticmethod
+    def _add_filter(
+        conditions: list[str],
+        parameters: list[Any],
+        column: str,
+        values: list[str],
+    ) -> None:
+        """Append a parameterized IN predicate when a filter is present."""
+
+        if values:
+            placeholders = ", ".join("?" for _ in values)
+            conditions.append(f"{column} IN ({placeholders})")
+            parameters.extend(values)
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        """Tokenize text into bounded FTS-safe alphanumeric terms."""
+
+        return re.findall(r"[a-z0-9]+", text.lower())[:64]
+
+    @staticmethod
+    def _json_object(value: str | None) -> dict[str, Any]:
+        """Decode a JSON object with a safe empty fallback."""
+
+        try:
+            parsed = json.loads(value or "{}")
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    @staticmethod
+    def _json_list(value: str | None) -> list[str]:
+        """Decode a JSON string list with a safe empty fallback."""
+
+        try:
+            parsed = json.loads(value or "[]")
+        except json.JSONDecodeError:
+            return []
+        return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+    @staticmethod
+    def _json_boxes(value: str | None) -> list[list[float]]:
+        """Decode bounding-box arrays for the retrieval response contract."""
+
+        try:
+            parsed = json.loads(value or "[]")
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [list(map(float, box)) for box in parsed if isinstance(box, (list, tuple))]

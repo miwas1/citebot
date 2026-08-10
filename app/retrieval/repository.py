@@ -45,6 +45,7 @@ class RetrievalRepository:
     async def list_chunks(
         self,
         filters: RetrievalFilters | None = None,
+        limit: int | None = None,
     ) -> list[IndexedChunkRecord]:
         """Return persisted chunks that satisfy the requested retrieval filters."""
 
@@ -70,6 +71,8 @@ class RetrievalRepository:
                 statement = statement.where(
                     ChunkRecord.index_version == filters.index_version
                 )
+        if limit is not None:
+            statement = statement.limit(limit)
         async with self._session_manager.session() as session:
             rows = (await session.execute(statement)).all()
         return [self._to_indexed_chunk(chunk, document) for chunk, document in rows]

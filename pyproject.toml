@@ -48,6 +48,9 @@ ocr = [
 [tool.setuptools.packages.find]
 include = ["app*"]
 
+[tool.setuptools.package-data]
+app = ["web/*.html", "web/*.css", "web/*.js"]
+
 [tool.pytest.ini_options]
 addopts = "-q"
 testpaths = ["tests"]

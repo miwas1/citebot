@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from app.agents.schemas import ResearchSessionRecord
+from sqlalchemy import delete, select
+
+from app.agents.schemas import ConversationSummary, ResearchSessionRecord
 from app.db.models import ResearchSessionRecordModel
 from app.db.session import DatabaseSessionManager
 
@@ -50,3 +52,47 @@ class ResearchSessionStore:
             existing.turns_json = payload["turns"]
             existing.memory_json = payload["memory"]
             existing.last_trace_id = record.last_trace_id
+
+    async def list(self, limit: int = 100) -> list[ConversationSummary]:
+        """Return recently updated conversation summaries."""
+
+        async with self._session_manager.session() as session:
+            records = (
+                await session.scalars(
+                    select(ResearchSessionRecordModel)
+                    .order_by(ResearchSessionRecordModel.updated_at.desc())
+                    .limit(limit)
+                )
+            ).all()
+        summaries: list[ConversationSummary] = []
+        for record in records:
+            turns = record.turns_json or []
+            first_user = next(
+                (turn for turn in turns if turn.get("role") == "user"),
+                None,
+            )
+            title = (
+                str(first_user.get("content", "New conversation"))
+                if first_user
+                else "New conversation"
+            )
+            summaries.append(
+                ConversationSummary(
+                    session_id=record.session_id,
+                    title=title[:80],
+                    updated_at=record.updated_at,
+                    turn_count=len(turns),
+                )
+            )
+        return summaries
+
+    async def delete(self, session_id: str) -> bool:
+        """Delete one conversation and return whether it existed."""
+
+        async with self._session_manager.session() as session:
+            result = await session.execute(
+                delete(ResearchSessionRecordModel).where(
+                    ResearchSessionRecordModel.session_id == session_id
+                )
+            )
+        return bool(result.rowcount)

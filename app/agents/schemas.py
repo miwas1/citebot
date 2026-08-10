@@ -121,12 +121,12 @@ class ResearchQueryRequest(BaseModel):
     """Request body for the research query API."""
 
     session_id: str | None = None
-    query: str
+    query: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=5, ge=1, le=20)
     allow_web_search: bool | None = None
     allow_python_execution: bool | None = None
     freshness_required: bool = False
-    analysis_code: str | None = None
+    analysis_code: str | None = Field(default=None, max_length=10000)
     analysis_inputs: dict[str, Any] = Field(default_factory=dict)
     include_debug_trace: bool = False
 
@@ -153,6 +153,15 @@ class ResearchSessionRecord(BaseModel):
     turns: list[ConversationTurn] = Field(default_factory=list)
     memory: ResearchMemory = Field(default_factory=ResearchMemory)
     last_trace_id: str | None = None
+
+
+class ConversationSummary(BaseModel):
+    """Compact conversation entry for the chat sidebar."""
+
+    session_id: str
+    title: str
+    updated_at: datetime
+    turn_count: int
 
 
 class ResearchGenerationRequest(BaseModel):

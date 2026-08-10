@@ -6,4 +6,6 @@
 4. Build the package with `python -m pip wheel --no-build-isolation --no-deps .` or the normal networked `uv build` workflow.
 5. Review bundled data against `THIRD_PARTY_NOTICES.md`; remove or document anything without redistribution rights.
 6. Review the Docker image and Compose configuration, especially credentials, published ports, and optional profiles.
-7. Create an annotated Git tag matching the package version and publish release notes.
+7. Exercise the browser upload, processing-status, cited chat, and conversation-history workflow.
+8. Validate the private-server runbook against a clean host: loopback API binding, TLS proxy, production API keys, backup, and restore.
+9. Create an annotated Git tag matching the package version and publish release notes.

@@ -8,6 +8,8 @@ CiteBot is a privacy-first document RAG system for local, offline operation. The
 
 - [Local Setup](#local-setup)
 - [Quick Start (Docker)](#quick-start-docker)
+- [Web Workspace](#web-workspace)
+- [Private Server Deployment](#private-server-deployment)
 - [Corpus Download](#corpus-download)
 - [Ingest a Corpus](#ingest-a-corpus)
 - [API Endpoints](#api-endpoints)
@@ -94,6 +96,14 @@ Services started:
 
 Qdrant, model services, and worker ports are not published to the host. Dozzle is opt-in with `docker compose --profile observability up` and remains loopback-bound.
 
+The Compose defaults target a 16 GB CPU-only workstation: one document worker,
+one active research generation with a two-request waiting queue, a 4,096-token
+LLM context, four-item embedding batches, 100-page PDFs, and bounded per-service
+memory/CPU limits. Keep at least 2 GB of host memory available and treat
+sustained swap as a failed capacity signal. The sparse index is SQLite FTS5 at
+`storage/sparse_index.sqlite3`; a legacy `sparse_index.json` is migrated without
+overwriting the original file.
+
 ### 4. Run without Docker (SQLite / local vector index)
 
 ```bash
@@ -115,6 +125,54 @@ make dev-logs        # follow API and document-worker logs
 make dev-down        # stop containers and preserve volumes
 make dev-reset       # stop containers and delete volumes
 ```
+
+## Web Workspace
+
+Open `http://127.0.0.1:8000/` after the stack is ready. The integrated workspace
+provides:
+
+- drag-and-drop uploads for PDF, DOCX, text, Markdown, JSON/JSONL, and images;
+- live queued/processing/ready status and a searchable document library;
+- streaming research conversations with durable history;
+- citations that open in a supporting-evidence inspector; and
+- responsive desktop and mobile layouts.
+
+When `RESEARCH_API_KEY` or `ADMIN_API_KEY` is configured, open the gear menu in
+the workspace and enter both values. Keys are retained in that browser's local
+storage and sent only to the same CiteBot origin. The research key permits chat
+and conversation history; the admin key permits uploads and document status.
+
+Browser uploads are streamed to `storage/uploads/`, validated against the
+supported extension allowlist, limited by `MAX_INPUT_BYTES`, and submitted to
+the durable document worker. Uploaded document content does not leave the local
+stack in offline mode.
+
+## Private Server Deployment
+
+For a personal server, office server, or private VM, keep CiteBot bound to
+loopback and publish it through a TLS reverse proxy. Do not expose Qdrant, the
+embedding service, or the LLM service to the network.
+
+The complete deployment runbook includes host sizing, DNS and TLS, secret
+generation, firewall rules, backups, upgrades, and recovery checks:
+
+**[Deploy CiteBot on a private server](docs/private-server-deployment.md)**
+
+Minimum production settings:
+
+```dotenv
+APP_ENV=production
+RUNTIME_MODE=offline
+RESEARCH_API_KEY=<independent-random-secret>
+ADMIN_API_KEY=<different-independent-random-secret>
+CITEBOT_PORT=8000
+```
+
+Compose publishes the API only on `127.0.0.1:${CITEBOT_PORT}`. A host-level
+reverse proxy such as Caddy or nginx should terminate HTTPS and proxy to that
+loopback address. For access by staff only, place the hostname behind a VPN,
+identity-aware proxy, or both; API keys protect CiteBot routes but are not a
+replacement for organization identity and device access controls.
 
 ---
 
@@ -300,6 +358,12 @@ Search flags:
 - `GET /api/v1/admin/ingestion/jobs/{job_id}`
 - `POST /api/v1/admin/ingestion/search`
 - `GET /api/v1/admin/ingestion/metrics`
+- `GET /api/v1/documents`
+- `GET /api/v1/documents/jobs`
+- `POST /api/v1/documents/uploads?filename=<name>`
+- `GET /api/v1/conversations`
+- `GET /api/v1/conversations/{session_id}`
+- `DELETE /api/v1/conversations/{session_id}`
 - `POST /api/v1/admin/evaluation/runs`
 - `GET /api/v1/admin/evaluation/runs/{run_id}`
 
@@ -312,6 +376,7 @@ The admin search endpoint accepts dense, sparse, and hybrid retrieval requests a
 The repository includes a LangGraph-backed research workflow for grounded local answer generation and citation verification. Web enrichment remains disabled in offline mode; the Python sandbox is separately opt-in.
 
 - `POST /api/v1/research/query`
+- `POST /api/v1/research/query/stream`
 
 Example request:
 
@@ -409,6 +474,7 @@ make eval-interpretability-ragas  # + RAGAS faithfulness scoring
 
 make integration-retrieval      # live backend integration test
 make benchmark-retrieval        # retrieval latency benchmark
+make benchmark-16gb             # 30-minute mixed-load 16 GB soak artifact
 ```
 
 ---
@@ -437,6 +503,15 @@ python -m app.evaluation.retrieval_harness integration --start-compose
 python -m app.evaluation.retrieval_harness benchmark --start-compose --iterations 10
 ```
 
+### 16 GB host soak
+
+After model provisioning, run `make benchmark-16gb`. It starts the default
+Compose profile, waits for readiness, samples `docker stats`, issues serial
+research queries for 30 minutes, and writes
+`artifacts/benchmarks/16gb-soak.json`. Treat the run as a release gate only if
+peak host memory remains above 2 GB, swap remains inactive, no container is
+OOM-killed, and the recorded p95 latency is acceptable for the target i7.
+
 ---
 
 ## Project Structure
@@ -452,6 +527,7 @@ app/
   observability/ Prometheus metrics, middleware
   retrieval/    Hybrid retrieval service, reranker
   tools/        Citation verifier, web search, Python sandbox
+  web/          Integrated document library and cited chat workspace
 scripts/
   download_corpus.py              Multi-source corpus downloader
   seed_interpretability_corpus.sh Download + merge shell orchestrator

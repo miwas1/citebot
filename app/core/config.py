@@ -44,7 +44,7 @@ class Settings(BaseSettings):
         alias="OBJECT_STORAGE_PATH",
     )
     sparse_index_path: Path = Field(
-        default=Path("./storage/sparse_index.json"),
+        default=Path("./storage/sparse_index.sqlite3"),
         alias="SPARSE_INDEX_PATH",
     )
     structured_document_path: Path = Field(
@@ -71,9 +71,19 @@ class Settings(BaseSettings):
         default=0.60, alias="OCR_MIN_NATIVE_TEXT_COVERAGE"
     )
     ocr_min_confidence: float = Field(default=0.75, alias="OCR_MIN_CONFIDENCE")
-    ocr_max_pages: int = Field(default=500, alias="OCR_MAX_PAGES")
+    # Conservative defaults for a CPU-only 16 GB workstation. Larger corpora
+    # should opt into an explicit profile after measuring peak RSS.
+    ocr_max_pages: int = Field(default=100, alias="OCR_MAX_PAGES")
     ocr_concurrency: int = Field(default=1, alias="OCR_CONCURRENCY")
-    max_input_bytes: int = Field(default=50 * 1024 * 1024, alias="MAX_INPUT_BYTES")
+    max_input_bytes: int = Field(default=25 * 1024 * 1024, alias="MAX_INPUT_BYTES")
+    ingestion_max_documents: int = Field(
+        default=500,
+        alias="INGESTION_MAX_DOCUMENTS",
+    )
+    ingestion_max_source_bytes: int = Field(
+        default=512 * 1024 * 1024,
+        alias="INGESTION_MAX_SOURCE_BYTES",
+    )
     ingestion_execution_mode: str = Field(
         default="foreground", alias="INGESTION_EXECUTION_MODE"
     )
@@ -91,7 +101,7 @@ class Settings(BaseSettings):
     embedding_timeout_seconds: float = Field(
         default=30.0, alias="EMBEDDING_TIMEOUT_SECONDS"
     )
-    embedding_batch_size: int = Field(default=8, alias="EMBEDDING_BATCH_SIZE")
+    embedding_batch_size: int = Field(default=4, alias="EMBEDDING_BATCH_SIZE")
     embedding_version: str = Field(default="qwen3-0.6b-v1", alias="EMBEDDING_VERSION")
     embedding_dimension: int = Field(default=1024, alias="EMBEDDING_DIMENSION")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -105,6 +115,14 @@ class Settings(BaseSettings):
     dense_primary_backend: str = Field(
         default="auto",
         alias="DENSE_PRIMARY_BACKEND",
+    )
+    allow_local_dense_fallback: bool = Field(
+        default=True,
+        alias="ALLOW_LOCAL_DENSE_FALLBACK",
+    )
+    max_local_dense_candidates: int = Field(
+        default=512,
+        alias="MAX_LOCAL_DENSE_CANDIDATES",
     )
     hybrid_dense_weight: float = Field(default=0.6, alias="HYBRID_DENSE_WEIGHT")
     hybrid_sparse_weight: float = Field(default=0.4, alias="HYBRID_SPARSE_WEIGHT")
@@ -129,7 +147,7 @@ class Settings(BaseSettings):
     )
     llm_base_url: str = Field(default="http://llm:8082/v1", alias="LLM_BASE_URL")
     llm_timeout_seconds: float = Field(default=60.0, alias="LLM_TIMEOUT_SECONDS")
-    llm_context_tokens: int = Field(default=8192, alias="LLM_CONTEXT_TOKENS")
+    llm_context_tokens: int = Field(default=4096, alias="LLM_CONTEXT_TOKENS")
     llm_generation_concurrency: int = Field(
         default=1, alias="LLM_GENERATION_CONCURRENCY"
     )
@@ -173,12 +191,18 @@ class Settings(BaseSettings):
         alias="RATE_LIMIT_WINDOW_SECONDS",
     )
     research_rate_limit_requests: int = Field(
-        default=0,
+        default=30,
         alias="RESEARCH_RATE_LIMIT_REQUESTS",
     )
     admin_rate_limit_requests: int = Field(
-        default=0,
+        default=10,
         alias="ADMIN_RATE_LIMIT_REQUESTS",
+    )
+    research_concurrency: int = Field(default=1, alias="RESEARCH_CONCURRENCY")
+    research_queue_size: int = Field(default=2, alias="RESEARCH_QUEUE_SIZE")
+    research_queue_timeout_seconds: float = Field(
+        default=0.25,
+        alias="RESEARCH_QUEUE_TIMEOUT_SECONDS",
     )
     observability_log_level: str = Field(
         default="INFO",
@@ -295,6 +319,9 @@ class Settings(BaseSettings):
         if self.max_input_bytes <= 0:
             msg = "MAX_INPUT_BYTES must be positive"
             raise ValueError(msg)
+        if self.ingestion_max_documents <= 0 or self.ingestion_max_source_bytes <= 0:
+            msg = "INGESTION_MAX_DOCUMENTS and INGESTION_MAX_SOURCE_BYTES must be positive"
+            raise ValueError(msg)
         if self.ingestion_execution_mode not in {"foreground", "queued"}:
             msg = "INGESTION_EXECUTION_MODE must be foreground or queued"
             raise ValueError(msg)
@@ -376,6 +403,9 @@ class Settings(BaseSettings):
         if self.dense_search_limit <= 0:
             msg = "DENSE_SEARCH_LIMIT must be positive"
             raise ValueError(msg)
+        if self.max_local_dense_candidates <= 0:
+            msg = "MAX_LOCAL_DENSE_CANDIDATES must be positive"
+            raise ValueError(msg)
         if self.reranker_candidate_count <= 0:
             msg = "RERANKER_CANDIDATE_COUNT must be positive"
             raise ValueError(msg)
@@ -414,6 +444,12 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         if self.admin_rate_limit_requests < 0:
             msg = "ADMIN_RATE_LIMIT_REQUESTS cannot be negative"
+            raise ValueError(msg)
+        if self.research_concurrency <= 0 or self.research_queue_size < 0:
+            msg = "RESEARCH_CONCURRENCY must be positive and RESEARCH_QUEUE_SIZE cannot be negative"
+            raise ValueError(msg)
+        if self.research_queue_timeout_seconds <= 0:
+            msg = "RESEARCH_QUEUE_TIMEOUT_SECONDS must be positive"
             raise ValueError(msg)
         if self.observability_log_level not in {
             "CRITICAL",

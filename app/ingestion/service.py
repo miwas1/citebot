@@ -12,7 +12,12 @@ from app.ingestion.loaders import LocalCorpusLoader
 from app.ingestion.normalizer import DocumentNormalizer
 from app.ingestion.object_store import LocalObjectStore
 from app.ingestion.repository import IngestionRepository
-from app.ingestion.schemas import IngestionMetrics, JobStatusResponse, SearchResult
+from app.ingestion.schemas import (
+    DocumentSummary,
+    IngestionMetrics,
+    JobStatusResponse,
+    SearchResult,
+)
 from app.ingestion.sparse_index import SparseIndex
 from app.ingestion.vector_writers import PgVectorWriter, QdrantWriter
 
@@ -128,6 +133,16 @@ class IngestionService:
 
         return await self._repository.recover_stale_jobs()
 
+    async def list_documents(self, limit: int = 200) -> list[DocumentSummary]:
+        """List documents available to the user workspace."""
+
+        return await self._repository.list_documents(limit)
+
+    async def list_jobs(self, limit: int = 100) -> list[JobStatusResponse]:
+        """List recent ingestion jobs for progress tracking."""
+
+        return await self._repository.list_jobs(limit)
+
     async def _process_job(
         self,
         job_id: str,
@@ -145,7 +160,7 @@ class IngestionService:
         chunks_written = 0
 
         try:
-            for loaded_document in self._loader.load(source_path):
+            for loaded_document in self._loader.iter_load(source_path):
                 documents_seen += 1
                 if worker_id is not None:
                     await self._repository.heartbeat(

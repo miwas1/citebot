@@ -12,6 +12,7 @@ from app.ingestion.schemas import (
     CanonicalDocument,
     ChunkPayload,
     DocumentState,
+    DocumentSummary,
     IngestionMetrics,
     JobStatusResponse,
 )
@@ -302,6 +303,50 @@ class IngestionRepository:
             return IngestionMetrics(
                 documents=documents or 0, chunks=chunks or 0, jobs=jobs or 0
             )
+
+    async def list_documents(self, limit: int = 200) -> list[DocumentSummary]:
+        """Return recently ingested documents for the user-facing library."""
+
+        async with self._session_manager.session() as session:
+            rows = (
+                await session.execute(
+                    select(DocumentRecord, func.count(ChunkRecord.chunk_id))
+                    .outerjoin(ChunkRecord)
+                    .group_by(DocumentRecord.document_id)
+                    .order_by(DocumentRecord.ingested_at.desc())
+                    .limit(limit)
+                )
+            ).all()
+        return [
+            DocumentSummary(
+                document_id=document.document_id,
+                title=document.title,
+                source_uri=document.source_uri,
+                content_hash=document.content_hash,
+                ingested_at=document.ingested_at,
+                chunk_count=chunk_count,
+                media_type=str(document.metadata_json.get("media_type"))
+                if document.metadata_json.get("media_type")
+                else None,
+                size_bytes=int(document.metadata_json.get("size_bytes"))
+                if document.metadata_json.get("size_bytes") is not None
+                else None,
+            )
+            for document, chunk_count in rows
+        ]
+
+    async def list_jobs(self, limit: int = 100) -> list[JobStatusResponse]:
+        """Return recent ingestion work for upload progress tracking."""
+
+        async with self._session_manager.session() as session:
+            records = (
+                await session.scalars(
+                    select(IngestionJobRecord)
+                    .order_by(IngestionJobRecord.started_at.desc())
+                    .limit(limit)
+                )
+            ).all()
+        return [self._to_job_response(record) for record in records]
 
     def _to_job_response(self, record: IngestionJobRecord) -> JobStatusResponse:
         """Convert a job ORM record into the API response model."""

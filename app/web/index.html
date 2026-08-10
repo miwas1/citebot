@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f2ed">
+  <title>CiteBot — Local research workspace</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <button class="brand" data-view="chat" aria-label="CiteBot home">
+        <span class="brand-mark">C</span><span>CiteBot</span>
+      </button>
+      <nav class="view-tabs" aria-label="Workspace">
+        <button class="tab active" data-view="chat">Ask</button>
+        <button class="tab" data-view="documents">Documents</button>
+      </nav>
+      <div class="top-actions">
+        <span class="privacy"><i></i> Local workspace</span>
+        <button class="icon-button" id="settingsButton" aria-label="Connection settings">⚙</button>
+      </div>
+    </header>
+
+    <main id="chatView" class="workspace chat-layout">
+      <aside class="history-panel">
+        <button class="new-chat" id="newChatButton"><span>＋</span> New conversation</button>
+        <div class="aside-label">Recent</div>
+        <div id="conversationList" class="conversation-list"></div>
+      </aside>
+
+      <section class="chat-panel">
+        <div id="emptyChat" class="empty-chat">
+          <div class="eyebrow">Your private research desk</div>
+          <h1>Ask your documents.<br><em>Check every source.</em></h1>
+          <p>CiteBot answers from your local library and shows the evidence behind each claim.</p>
+          <div class="prompt-row">
+            <button class="suggestion">Summarize the key findings across my documents</button>
+            <button class="suggestion">Where do my sources disagree?</button>
+            <button class="suggestion">Create a cited briefing on this topic</button>
+          </div>
+        </div>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <form id="chatForm" class="composer">
+          <textarea id="queryInput" rows="1" maxlength="2000" placeholder="Ask across your documents…" aria-label="Question"></textarea>
+          <div class="composer-bottom">
+            <span id="libraryHint">Loading library…</span>
+            <button id="sendButton" type="submit" aria-label="Send question">↑</button>
+          </div>
+        </form>
+      </section>
+
+      <aside id="sourcePanel" class="source-panel">
+        <div class="source-header"><span>Source inspector</span><button id="closeSources" aria-label="Close sources">×</button></div>
+        <div id="sourceEmpty" class="source-empty">Select a citation to inspect the supporting passage.</div>
+        <div id="sourceContent" class="source-content hidden"></div>
+      </aside>
+    </main>
+
+    <main id="documentsView" class="workspace documents-view hidden">
+      <section class="documents-heading">
+        <div><div class="eyebrow">Knowledge library</div><h1>Documents</h1><p>Upload, process, and keep track of the sources CiteBot can use.</p></div>
+        <button class="primary-button" id="uploadButton">＋ Add documents</button>
+        <input id="fileInput" type="file" multiple hidden accept=".pdf,.docx,.txt,.md,.json,.jsonl,.png,.jpg,.jpeg,.tif,.tiff">
+      </section>
+      <section id="dropZone" class="drop-zone">
+        <div class="drop-icon">↥</div><strong>Drop documents here</strong><span>PDF, Word, text, Markdown, JSON, or images · up to 25 MB each</span>
+      </section>
+      <section class="library-section">
+        <div class="library-toolbar">
+          <div><span id="documentCount">0 documents</span><span class="toolbar-separator">·</span><span id="readyCount">0 ready</span></div>
+          <input id="documentSearch" type="search" placeholder="Filter documents" aria-label="Filter documents">
+        </div>
+        <div class="document-table" role="table">
+          <div class="document-row table-head" role="row"><span>Name</span><span>Status</span><span>Added</span><span>Chunks</span></div>
+          <div id="documentList"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" class="settings-form">
+      <div class="dialog-heading"><div><div class="eyebrow">Connection</div><h2>Workspace access</h2></div><button value="cancel" aria-label="Close">×</button></div>
+      <p>Keys stay in this browser and are only sent to your local CiteBot server.</p>
+      <label>Research API key<input id="researchKey" type="password" autocomplete="off" placeholder="Optional in development"></label>
+      <label>Admin API key<input id="adminKey" type="password" autocomplete="off" placeholder="Optional in development"></label>
+      <button id="saveSettings" class="primary-button" value="default">Save settings</button>
+    </form>
+  </dialog>
+  <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

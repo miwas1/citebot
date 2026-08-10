@@ -112,7 +112,7 @@ class DocumentState(BaseModel):
 class IngestionRequest(BaseModel):
     """Request body for running a local or admin ingestion job."""
 
-    source_path: str
+    source_path: str = Field(min_length=1, max_length=4096)
     force_reindex: bool = False
     embedding_version: str = "qwen3-0.6b-v1"
     index_version: str = "v2"
@@ -145,7 +145,7 @@ class JobStatusResponse(BaseModel):
 class SearchRequest(BaseModel):
     """Request body for dense, sparse, or hybrid retrieval over ingested chunks."""
 
-    query: str
+    query: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=5, ge=1, le=50)
     strategy: Literal["sparse", "dense", "hybrid"] = "hybrid"
     index_target: Literal["auto", "pgvector", "qdrant", "local"] = "auto"
@@ -194,6 +194,28 @@ class IngestionMetrics(BaseModel):
     documents: int
     chunks: int
     jobs: int
+
+
+class DocumentSummary(BaseModel):
+    """Document metadata presented by the end-user library."""
+
+    document_id: str
+    title: str
+    source_uri: str
+    content_hash: str
+    ingested_at: datetime
+    chunk_count: int = 0
+    media_type: str | None = None
+    size_bytes: int | None = None
+
+
+class UploadResponse(BaseModel):
+    """Accepted browser upload and its ingestion job."""
+
+    upload_id: str
+    filename: str
+    size_bytes: int
+    job: JobStatusResponse
 
 
 # ``LoadedDocument`` is declared before the structured models for API readability;

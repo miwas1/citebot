@@ -29,11 +29,13 @@ class LocalDenseRetriever:
         self,
         repository: RetrievalRepository,
         embedder: BaseEmbedder,
+        max_candidates: int,
     ) -> None:
         """Store dependencies required for local dense scoring."""
 
         self._repository = repository
         self._embedder = embedder
+        self._max_candidates = max_candidates
 
     async def search(
         self,
@@ -43,9 +45,17 @@ class LocalDenseRetriever:
     ) -> list[SearchResult]:
         """Return cosine-ranked chunks by embedding each candidate locally."""
 
-        chunks = await self._repository.list_chunks(filters)
+        chunks = await self._repository.list_chunks(
+            filters,
+            limit=self._max_candidates + 1,
+        )
         if not chunks:
             return []
+        if len(chunks) > self._max_candidates:
+            raise RetrievalBackendUnavailableError(
+                "Local dense fallback is disabled for corpora larger than "
+                f"MAX_LOCAL_DENSE_CANDIDATES={self._max_candidates}"
+            )
         chunk_embeddings = await self._embedder.embed_texts(
             [chunk.text for chunk in chunks]
         )
@@ -260,7 +270,11 @@ class RetrievalService:
         self._sparse_index = sparse_index
         self._reranker = reranker
         self._dense_backends = {
-            "local": LocalDenseRetriever(repository, embedder),
+            "local": LocalDenseRetriever(
+                repository,
+                embedder,
+                max_candidates=settings.max_local_dense_candidates,
+            ),
             "pgvector": PgVectorDenseRetriever(
                 session_manager, settings.enable_pgvector
             ),
@@ -390,19 +404,30 @@ class RetrievalService:
         if index_target != "auto":
             if index_target == "local":
                 return ["local"]
-            return [index_target, "local"]
+            backends = [index_target]
+            if self._settings.allow_local_dense_fallback:
+                backends.append("local")
+            return backends
         configured_primary = self._settings.dense_primary_backend
         if configured_primary == "auto":
             configured_primary = (
                 "qdrant" if self._settings.enable_qdrant else "pgvector"
             )
             if configured_primary not in {"pgvector", "qdrant"}:
-                configured_primary = "local"
+                configured_primary = (
+                    "local" if self._settings.allow_local_dense_fallback else "none"
+                )
         if configured_primary == "qdrant":
-            return ["qdrant", "pgvector", "local"]
+            backends = ["qdrant", "pgvector"]
+            if self._settings.allow_local_dense_fallback:
+                backends.append("local")
+            return backends
         if configured_primary == "pgvector":
-            return ["pgvector", "qdrant", "local"]
-        return ["local"]
+            backends = ["pgvector", "qdrant"]
+            if self._settings.allow_local_dense_fallback:
+                backends.append("local")
+            return backends
+        return ["local"] if self._settings.allow_local_dense_fallback else []
 
     def _fuse_results(
         self,

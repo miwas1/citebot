@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from app.agents.generation import build_answer_generator
 from app.agents.service import ResearchAgentService
 from app.agents.session_store import ResearchSessionStore
+from app.core.admission import BoundedAdmission
 from app.core.config import Settings, get_settings
 from app.core.health import HealthService
 from app.core.model_manifest import verify_model_manifest
@@ -42,7 +43,9 @@ class ServiceContainer:
     ingestion_service: IngestionService
     retrieval_service: RetrievalService
     research_agent_service: ResearchAgentService
+    research_session_store: ResearchSessionStore
     evaluation_service: EvaluationService
+    research_admission: BoundedAdmission
 
     async def initialize(self) -> None:
         """Initialize storage, tables, and external writer schemas."""
@@ -131,7 +134,13 @@ def build_container(settings: Settings) -> ServiceContainer:
         ingestion_service=ingestion_service,
         retrieval_service=retrieval_service,
         research_agent_service=research_agent_service,
+        research_session_store=session_store,
         evaluation_service=evaluation_service,
+        research_admission=BoundedAdmission(
+            concurrency=settings.research_concurrency,
+            queue_size=settings.research_queue_size,
+            timeout_seconds=settings.research_queue_timeout_seconds,
+        ),
     )
 
 
