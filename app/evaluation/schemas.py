@@ -48,7 +48,7 @@ class EvaluationRunRequest(BaseModel):
     dataset_path: Path | None = None
     source_path: Path | None = None
     force_reindex: bool = False
-    embedding_version: str = "qwen3-0.6b-v1"
+    embedding_version: str = "bge-small-en-v1.5"
     index_version: str = "v2"
     run_ragas: bool = False
     threshold_mode: Literal["report", "ci"] = "report"

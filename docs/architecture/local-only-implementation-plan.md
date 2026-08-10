@@ -12,7 +12,7 @@ The rough draft is the default product direction:
 - Tesseract as a low-confidence fallback.
 - OpenCV preprocessing.
 - Structured Markdown + JSON canonical documents.
-- Qwen3-Embedding-0.6B for embeddings.
+- BGE-small-en-v1.5 for embeddings.
 - Qdrant for dense vector storage.
 - Phi-4-mini-instruct Q4 behind a llama.cpp-compatible server.
 - SQLite and local filesystem for manifests, jobs, sessions, and artifacts.
@@ -70,7 +70,7 @@ rag-api ------------------------------+
     |          +--> PaddleOCR/PP-StructureV3
     |          +--> Tesseract fallback
     |          +--> embedding-server
-    |                    Qwen3-Embedding-0.6B
+    |                    BGE-small-en-v1.5
     v
   qdrant
 
@@ -100,7 +100,7 @@ an environment file; production deployments must set the offline value explicitl
 | `SPARSE_INDEX_PATH` | `/data/sparse_index.sqlite3` | SQLite FTS5 sparse index with transactional updates; legacy JSON is migrated to a sibling SQLite file. |
 | `VECTOR_BACKEND` | `qdrant` | Allow `qdrant` or `local` for tests/small fallback. Do not dual-write by default. |
 | `QDRANT_URL` | `http://qdrant:6333` | Host must pass the local-service allowlist. |
-| `QDRANT_COLLECTION` | `citebot_chunks_qwen3_v2` | Versioned; never reuse an incompatible-dimension collection. |
+| `QDRANT_COLLECTION` | `citebot_chunks_bge_small_v1` | Versioned; never reuse an incompatible-dimension collection. |
 | `ALLOW_LOCAL_DENSE_FALLBACK` | `false` in Compose | Prevents an outage from triggering full-corpus re-embedding; enable only for tests/small corpora. |
 | `MAX_LOCAL_DENSE_CANDIDATES` | `512` | Hard cap for explicit local dense fallback. |
 | `DOCUMENT_PARSER` | `auto` | `auto`, `native`, or `ocr`; `auto` is the production default. |
@@ -113,10 +113,10 @@ an environment file; production deployments must set the offline value explicitl
 | `OCR_CONCURRENCY` | `1` | Reject values above detected/configured resource budget unless a force flag is used. |
 | `EMBEDDING_PROVIDER` | `local-http` | `test` is permitted only in test mode; hosted providers are invalid. |
 | `EMBEDDING_BASE_URL` | `http://embedding:8081` | Host must pass the allowlist. |
-| `EMBEDDING_MODEL` | `Qwen/Qwen3-Embedding-0.6B` | Local artifact/model identifier; override requires a new embedding/index version. |
-| `EMBEDDING_DIMENSION` | `1024` | Validate against service metadata before opening/creating a collection. |
+| `EMBEDDING_MODEL` | `BAAI/bge-small-en-v1.5` | Local artifact/model identifier; override requires a new embedding/index version. |
+| `EMBEDDING_DIMENSION` | `384` | Validate against service metadata before opening/creating a collection. |
 | `EMBEDDING_BATCH_SIZE` | `4` | Tune from benchmark; worker must cap payload bytes as well as item count. |
-| `EMBEDDING_VERSION` | `qwen3-0.6b-v1` | Required in chunks and vector payloads. |
+| `EMBEDDING_VERSION` | `bge-small-en-v1.5` | Required in chunks and vector payloads. |
 | `ANSWER_PROVIDER` | `llama-cpp` | `test` only in test mode; hosted providers are invalid. |
 | `LLM_BASE_URL` | `http://llm:8082/v1` | Host must pass the allowlist. |
 | `ANSWER_MODEL` | `phi-4-mini-instruct-q4` | Maps to a pinned local GGUF artifact. |
@@ -130,7 +130,7 @@ an environment file; production deployments must set the offline value explicitl
 | `EVALUATION_EVALUATOR_PROVIDER` | `local` | Local deterministic metrics by default; optional local-LLM judge after calibration. |
 | `MODEL_MANIFEST_PATH` | `/models/manifest.lock.json` | Startup verifies file presence, size, checksum, and declared license metadata. |
 
-The provisional `1024` embedding dimension must be verified against the chosen local artifact during Phase 2. Startup must compare runtime model metadata with `EMBEDDING_DIMENSION` and the Qdrant collection schema, then fail before ingestion/query if they disagree.
+The `384` embedding dimension must be verified against the chosen local artifact during Phase 2. Startup must compare runtime model metadata with `EMBEDDING_DIMENSION` and the Qdrant collection schema, then fail before ingestion/query if they disagree.
 
 ## 5. Data model and API changes
 
@@ -205,7 +205,7 @@ Primary files: `app/ingestion/embedder.py`, `app/agents/generation.py`, `app/cor
 Exit criteria:
 
 - Text/JSON ingestion, retrieval, answer generation, and citation verification succeed with network egress disabled.
-- Runtime reports the expected Qwen3 and Phi model/artifact versions.
+- Runtime reports the expected BGE and Phi model/artifact versions.
 - Two concurrent answer requests never cause more than one active model generation at the default setting.
 
 ### Phase 2 — Structured parsing and selective OCR
@@ -254,14 +254,14 @@ Exit criteria:
 - OCR, embedding, and generation concurrency never exceeds configured limits.
 - API health remains responsive during a worst-case OCR fixture on the target laptop.
 
-### Phase 4 — Versioned Qwen3/Qdrant cutover
+### Phase 4 — Versioned BGE/Qdrant cutover
 
 Goal: migrate from deterministic 32-dimensional vectors to the real default embedding index without an unsafe in-place change.
 
 Tasks:
 
 1. Add a model/collection compatibility check before reads or writes.
-2. Create `citebot_chunks_qwen3_v2` (or a generated versioned name) with the verified Qwen3 dimension and payload indexes.
+2. Create `citebot_chunks_bge_small_v1` (or a generated versioned name) with the verified BGE dimension and payload indexes.
 3. Rebuild chunks from canonical structured documents and re-embed into the new collection using resumable jobs.
 4. Run retrieval/evaluation comparisons against the old and new indexes; do not blend scores across embedding spaces.
 5. Switch the active collection through one config/alias change after gates pass.

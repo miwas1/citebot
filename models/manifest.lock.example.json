@@ -2,8 +2,8 @@
   "schema_version": "model-manifest-v1",
   "artifacts": [
     {
-      "name": "qwen3-embedding-0.6b",
-      "path": "Qwen3-Embedding-0.6B",
+      "name": "bge-small-en-v1.5",
+      "path": "bge-small-en-v1.5",
       "size": 0,
       "sha256": "replace-with-reviewed-sha256",
       "revision": "pinned-revision",

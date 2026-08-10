@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     )
     qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
     qdrant_collection: str = Field(
-        default="citebot_chunks_qwen3_v2", alias="QDRANT_COLLECTION"
+        default="citebot_chunks_bge_small_v1", alias="QDRANT_COLLECTION"
     )
     enable_qdrant: bool = Field(default=True, alias="ENABLE_QDRANT")
     enable_pgvector: bool = Field(default=False, alias="ENABLE_PGVECTOR")
@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     ingestion_max_attempts: int = Field(default=3, alias="INGESTION_MAX_ATTEMPTS")
     embedding_provider: str = Field(default="local-http", alias="EMBEDDING_PROVIDER")
     embedding_model: str = Field(
-        default="Qwen/Qwen3-Embedding-0.6B", alias="EMBEDDING_MODEL"
+        default="BAAI/bge-small-en-v1.5", alias="EMBEDDING_MODEL"
     )
     embedding_base_url: str = Field(
         default="http://embedding:8081", alias="EMBEDDING_BASE_URL"
@@ -102,8 +102,8 @@ class Settings(BaseSettings):
         default=30.0, alias="EMBEDDING_TIMEOUT_SECONDS"
     )
     embedding_batch_size: int = Field(default=4, alias="EMBEDDING_BATCH_SIZE")
-    embedding_version: str = Field(default="qwen3-0.6b-v1", alias="EMBEDDING_VERSION")
-    embedding_dimension: int = Field(default=1024, alias="EMBEDDING_DIMENSION")
+    embedding_version: str = Field(default="bge-small-en-v1.5", alias="EMBEDDING_VERSION")
+    embedding_dimension: int = Field(default=384, alias="EMBEDDING_DIMENSION")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     gemini_embedding_model: str = Field(

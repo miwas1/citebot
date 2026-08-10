@@ -57,9 +57,9 @@ The example file is configured for an offline local run. Copy it before starting
 |---|---|---|
 | `RUNTIME_MODE` | `offline` fail-closed runtime policy | `offline` |
 | `EMBEDDING_PROVIDER` | `local-http` (real local service) or `local`/`test` (deterministic tests) | `local-http` |
-| `EMBEDDING_MODEL` | Local embedding artifact | `Qwen/Qwen3-Embedding-0.6B` |
+| `EMBEDDING_MODEL` | Local embedding artifact | `BAAI/bge-small-en-v1.5` |
 | `EMBEDDING_BASE_URL` | Private embedding service URL | `http://embedding:8081` |
-| `EMBEDDING_DIMENSION` | Must match the local model artifact | `1024` |
+| `EMBEDDING_DIMENSION` | Must match the local model artifact | `384` |
 | `ANSWER_PROVIDER` | `llama-cpp` or `local`/`test` (deterministic tests) | `llama-cpp` |
 | `ANSWER_MODEL` | Local quantized model artifact | `phi-4-mini-instruct-q4` |
 | `LLM_BASE_URL` | Private llama.cpp-compatible URL | `http://llm:8082/v1` |
@@ -74,7 +74,7 @@ The example file is configured for an offline local run. Copy it before starting
 
 ### 3. Provision model artifacts and start the offline stack
 
-Run the one-time bootstrap command below. It downloads the default Qwen embedding
+Run the one-time bootstrap command below. It downloads the default BGE embedding
 model, Phi-4-mini GGUF, and PaddleOCR detection/recognition models to the local
 artifact directory, records their exact upstream commits and checksums in
 `manifest.lock.json`, builds/pulls the required containers, and starts the stack.

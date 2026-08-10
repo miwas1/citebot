@@ -223,7 +223,7 @@ def test_model_provisioner_downloads_into_compose_paths(tmp_path: Path) -> None:
     artifacts = provision(build_specs({}), tmp_path, FakeHuggingFaceClient())
     manifest = write_manifest(tmp_path, artifacts)
 
-    assert (tmp_path / "Qwen3-Embedding-0.6B" / "config.json").is_file()
+    assert (tmp_path / "bge-small-en-v1.5" / "config.json").is_file()
     assert (tmp_path / "phi-4-mini-instruct-q4.gguf").is_file()
     assert (tmp_path / "paddleocr" / "detection" / "config.json").is_file()
     assert (tmp_path / "paddleocr" / "recognition" / "config.json").is_file()

@@ -114,7 +114,7 @@ class IngestionRequest(BaseModel):
 
     source_path: str = Field(min_length=1, max_length=4096)
     force_reindex: bool = False
-    embedding_version: str = "qwen3-0.6b-v1"
+    embedding_version: str = "bge-small-en-v1.5"
     index_version: str = "v2"
 
 

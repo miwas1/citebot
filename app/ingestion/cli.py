@@ -19,14 +19,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a corpus path.")
     ingest_parser.add_argument("source_path", type=Path)
-    ingest_parser.add_argument("--embedding-version", default="qwen3-0.6b-v1")
+    ingest_parser.add_argument("--embedding-version", default="bge-small-en-v1.5")
     ingest_parser.add_argument("--index-version", default="v2")
 
     reindex_parser = subparsers.add_parser(
         "reindex", help="Force re-index a corpus path."
     )
     reindex_parser.add_argument("source_path", type=Path)
-    reindex_parser.add_argument("--embedding-version", default="qwen3-0.6b-v1")
+    reindex_parser.add_argument("--embedding-version", default="bge-small-en-v1.5")
     reindex_parser.add_argument("--index-version", default="v2")
 
     search_parser = subparsers.add_parser(

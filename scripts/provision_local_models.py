@@ -93,10 +93,10 @@ def build_specs(environ: dict[str, str]) -> list[ArtifactSpec]:
 
     return [
         ArtifactSpec(
-            name="qwen3-embedding-0.6b",
-            repository=environ.get("EMBEDDING_MODEL_REPOSITORY", "Qwen/Qwen3-Embedding-0.6B"),
+            name="bge-small-en-v1.5",
+            repository=environ.get("EMBEDDING_MODEL_REPOSITORY", "BAAI/bge-small-en-v1.5"),
             revision=environ.get("EMBEDDING_MODEL_REVISION", "main"),
-            path=Path("Qwen3-Embedding-0.6B"),
+            path=Path("bge-small-en-v1.5"),
         ),
         ArtifactSpec(
             name="phi-4-mini-instruct-q4",

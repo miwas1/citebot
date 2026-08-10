@@ -73,9 +73,15 @@ services:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     command:
       - --model-id
-      - /models/Qwen3-Embedding-0.6B
+      - /models/bge-small-en-v1.5
       - --port
       - "8081"
+      - --max-batch-tokens
+      - "1024"
+      - --max-client-batch-size
+      - "4"
+      - --max-concurrent-requests
+      - "8"
     expose:
       - "8081"
     environment:
@@ -92,7 +98,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-    mem_limit: 2500m
+    mem_limit: 1g
     cpus: "2.0"
     restart: unless-stopped
 

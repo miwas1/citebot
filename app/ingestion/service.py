@@ -63,7 +63,7 @@ class IngestionService:
         self,
         source_path: Path,
         force_reindex: bool = False,
-        embedding_version: str = "qwen3-0.6b-v1",
+        embedding_version: str = "bge-small-en-v1.5",
         index_version: str = "v2",
     ) -> JobStatusResponse:
         """Ingest a file or directory and return the resulting job summary."""
@@ -241,7 +241,7 @@ class IngestionService:
     async def reindex_path(
         self,
         source_path: Path,
-        embedding_version: str = "qwen3-0.6b-v1",
+        embedding_version: str = "bge-small-en-v1.5",
         index_version: str = "v2",
     ) -> JobStatusResponse:
         """Force a re-index of the given corpus source path."""

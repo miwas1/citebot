@@ -1,6 +1,6 @@
 # Offline model artifacts
 
-Run `make models-provision` once to download the default Qwen3 embedding model,
+Run `make models-provision` once to download the default BGE embedding model,
 Phi-4-mini GGUF, and PaddleOCR detection/recognition snapshots. The command
 resolves every source revision to an immutable upstream commit, hashes the local
 artifacts, and writes `manifest.lock.json`. Use the provisioning variables in
