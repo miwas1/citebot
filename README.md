@@ -88,13 +88,15 @@ make local-setup
 
 Services started:
 
-- FastAPI on `http://127.0.0.1:8000`
+- CiteBot through Caddy on `http://127.0.0.1/`
+- Dozzle through Caddy on `http://127.0.0.1:8888/`
 - local embedding service on the private Compose network
 - local llama.cpp server on the private Compose network
 - Qdrant on the private Compose network
 - SQLite, raw/structured documents, and indexes under `./storage`
 
-Qdrant, model services, and worker ports are not published to the host. Dozzle is opt-in with `docker compose --profile observability up` and remains loopback-bound.
+Qdrant, model services, and worker ports are not published to the host. The
+API remains bound to host loopback on port 8000; Caddy is the public listener.
 
 The Compose defaults target a 16 GB CPU-only workstation: one document worker,
 one active research generation with a two-request waiting queue, a 4,096-token
@@ -128,7 +130,7 @@ make dev-reset       # stop containers and delete volumes
 
 ## Web Workspace
 
-Open `http://127.0.0.1:8000/` after the stack is ready. The integrated workspace
+Open `http://127.0.0.1/` after the stack is ready. The integrated workspace
 provides:
 
 - drag-and-drop uploads for PDF, DOCX, text, Markdown, JSON/JSONL, and images;
@@ -149,9 +151,20 @@ stack in offline mode.
 
 ## Private Server Deployment
 
-For a personal server, office server, or private VM, keep CiteBot bound to
-loopback and publish it through a TLS reverse proxy. Do not expose Qdrant, the
-embedding service, or the LLM service to the network.
+For a personal server, office server, or private VM, the Compose stack includes
+Caddy as an HTTP reverse proxy. CiteBot is available on port 80 and Dozzle is
+available on port 8888. Do not expose Qdrant, the embedding service, or the LLM
+service to the network.
+
+The default public URLs are:
+
+- CiteBot: `http://<server-ip>/`
+- Dozzle: `http://<server-ip>:8888/`
+
+Dozzle has no authentication configured by this Compose file. Restrict port
+8888 in the EC2 security group or put authentication/VPN access in front of it
+before exposing it beyond a trusted network. Use HTTPS for credentials and
+document uploads in any non-test deployment.
 
 The complete deployment runbook includes host sizing, DNS and TLS, secret
 generation, firewall rules, backups, upgrades, and recovery checks:
@@ -168,11 +181,12 @@ ADMIN_API_KEY=<different-independent-random-secret>
 CITEBOT_PORT=8000
 ```
 
-Compose publishes the API only on `127.0.0.1:${CITEBOT_PORT}`. A host-level
-reverse proxy such as Caddy or nginx should terminate HTTPS and proxy to that
-loopback address. For access by staff only, place the hostname behind a VPN,
-identity-aware proxy, or both; API keys protect CiteBot routes but are not a
-replacement for organization identity and device access controls.
+Compose publishes the API only on `127.0.0.1:${CITEBOT_PORT}` and routes public
+HTTP traffic through Caddy. Set `CITEBOT_HTTP_PORT` and `DOZZLE_HTTP_PORT` in
+`.env` if the default host ports are unavailable. For access by staff only,
+place the hostname behind a VPN, identity-aware proxy, or both; API keys
+protect CiteBot routes but are not a replacement for organization identity and
+device access controls.
 
 ---
 

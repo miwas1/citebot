@@ -1,0 +1,19 @@
+:80 {
+    encode zstd gzip
+
+    request_body {
+        max_size 26MB
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "same-origin"
+        -Server
+    }
+
+    reverse_proxy api:8000
+}
+
+:8888 {
+    reverse_proxy dozzle:8080
+}

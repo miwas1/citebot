@@ -81,11 +81,17 @@ docker compose ps
 docker compose logs --tail=100 api document-worker
 ```
 
-The API must be reachable only from the server at
-`http://127.0.0.1:8000`. Qdrant, embedding, and LLM ports are exposed only on
-the internal Compose network.
+The API is reachable internally at `http://127.0.0.1:8000`. Caddy publishes
+CiteBot on port 80 and Dozzle on port 8888. Qdrant, embedding, and LLM ports
+remain exposed only on the internal Compose network.
 
-## 4. Put HTTPS in front
+## 4. Optional: put HTTPS in front
+
+The Compose stack serves plain HTTP for simple EC2/private-network use. For a
+public deployment, put HTTPS in front of the Caddy listener and do not expose
+Dozzle without additional access control. The built-in Caddy service can be
+changed to use a real hostname instead of `:80` if you want Caddy to manage
+certificates directly.
 
 ### Caddy example
 
@@ -143,9 +149,10 @@ server {
 }
 ```
 
-Do not change the Compose API binding to `0.0.0.0`. The reverse proxy should be
-the only public listener. Restrict 8000, 6333, 8081, and 8082 at the host and
-cloud firewalls. Prefer VPN or identity-aware proxy access for business use.
+Do not change the Compose API binding to `0.0.0.0`. Caddy should remain the
+public listener. Restrict 8000, 6333, 8081, and 8082 at the host and cloud
+firewalls. Restrict Dozzle's 8888 listener as well unless it is intentionally
+public. Prefer VPN or identity-aware proxy access for business use.
 
 ## 5. Verify the deployment
 

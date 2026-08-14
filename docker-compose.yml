@@ -42,6 +42,27 @@ services:
     cpus: "1.5"
     restart: unless-stopped
 
+  caddy:
+    image: caddy:2.10.2-alpine
+    depends_on:
+      api:
+        condition: service_started
+      dozzle:
+        condition: service_started
+    ports:
+      - "${CITEBOT_HTTP_PORT:-80}:80"
+      - "${DOZZLE_HTTP_PORT:-8888}:8888"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - citebot_internal
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+
   document-worker:
     build:
       context: .
@@ -171,15 +192,14 @@ services:
 
   dozzle:
     image: amir20/dozzle:v10.6.2
-    profiles: ["observability"]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    ports:
-      - "127.0.0.1:8888:8080"
     networks:
       - citebot_internal
 
 volumes:
+  caddy_data:
+  caddy_config:
   postgres_data:
   qdrant_data:
 
