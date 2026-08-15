@@ -37,6 +37,7 @@
           <div class="eyebrow" id="chatEyebrow">Your private research desk</div>
           <h1>Ask your documents.<br><em>Check every source.</em></h1>
           <p id="chatDescription">CiteBot answers from this project's local library and shows the evidence behind each claim.</p>
+          <button class="empty-upload" id="emptyUploadButton" type="button">＋ Add documents</button>
           <div class="prompt-row">
             <button class="suggestion">Summarize the key findings across my documents</button>
             <button class="suggestion">Where do my sources disagree?</button>
@@ -47,7 +48,7 @@
         <form id="chatForm" class="composer">
           <textarea id="queryInput" rows="1" maxlength="2000" placeholder="Ask across your documents…" aria-label="Question"></textarea>
           <div class="composer-bottom">
-            <span id="libraryHint">Loading project…</span>
+            <div class="composer-library"><span id="libraryHint">Loading project…</span><button id="composerUploadButton" class="composer-upload" type="button">＋ Add documents</button></div>
             <button id="sendButton" type="submit" aria-label="Send question">↑</button>
           </div>
         </form>

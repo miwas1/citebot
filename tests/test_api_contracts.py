@@ -174,6 +174,37 @@ def test_streaming_research_query_emits_start_and_complete_events(
     assert payload[1]["data"]["answer"]["citations"]
 
 
+def test_greeting_bypasses_retrieval_and_returns_conversational_reply(
+    configured_environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A greeting must not retrieve or cite an unrelated project source."""
+
+    async def should_not_retrieve(*args: object, **kwargs: object) -> object:
+        raise AssertionError("retrieval should not run for a greeting")
+
+    with TestClient(create_app()) as client:
+        monkeypatch.setattr(
+            client.app.state.container.retrieval_service,
+            "explain",
+            should_not_retrieve,
+        )
+        response = client.post(
+            "/api/v1/research/query",
+            json={"query": "hi"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["answer"]["direct_answer"] == (
+        "Hi! What would you like to research in this project?"
+    )
+    assert payload["answer"]["citations"] == []
+    assert payload["retrieved_contexts"] == []
+    assert "conversational_response" in payload["state_transitions"]
+    assert "hybrid_retrieval" not in payload["state_transitions"]
+
+
 def test_answer_service_failure_is_returned_without_stream_crash(
     configured_environment: Path,
     monkeypatch: pytest.MonkeyPatch,

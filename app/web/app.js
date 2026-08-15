@@ -41,6 +41,18 @@ function showView(name) {
   if (name === 'projects') refreshProjects();
 }
 
+function openDocumentUpload() {
+  if (!state.project || state.project.status === 'archived') {
+    toast('Choose an active project before uploading', true);
+    return;
+  }
+  showView('documents');
+  const dropZone = $('#dropZone');
+  dropZone.classList.add('attention');
+  setTimeout(() => dropZone.classList.remove('attention'), 900);
+  $('#fileInput').click();
+}
+
 function toast(message, error = false) {
   const element = document.createElement('div');
   element.className = `toast${error ? ' error' : ''}`;
@@ -304,7 +316,9 @@ async function createProject(event) {
 $$('[data-view]').forEach((button) => button.addEventListener('click', () => showView(button.dataset.view)));
 $('#projectSwitcher').onclick = () => showView('projects');
 $('#newChatButton').onclick = newChat;
-$('#uploadButton').onclick = () => $('#fileInput').click();
+$('#uploadButton').onclick = openDocumentUpload;
+$('#emptyUploadButton').onclick = openDocumentUpload;
+$('#composerUploadButton').onclick = openDocumentUpload;
 $('#fileInput').onchange = (event) => uploadFiles(event.target.files);
 $('#documentSearch').oninput = renderDocuments;
 $('#newProjectButton').onclick = () => $('#newProjectDialog').showModal();

@@ -65,7 +65,7 @@ def _migration_002_projects(connection) -> None:
             "sample-project",
             "Sample Project",
             "sample",
-            "Bundled CiteBot sources, ready for a first query.",
+            "100 recent machine-learning papers from arXiv's cs.LG category.",
             True,
         ),
     ):

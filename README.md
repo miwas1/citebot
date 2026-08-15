@@ -7,7 +7,8 @@ CiteBot is a privacy-first document RAG system for local, offline operation. The
 CiteBot is a working local beta for a trusted deployment. Project-scoped
 documents, retrieval, cited research, conversations, evidence, and workflow
 execution are implemented. The first offline startup is automated: it creates
-and populates the Sample Project, then exposes its readiness in the workspace.
+and populates the Sample Project with 100 recent machine-learning papers from
+arXiv's `cs.LG` category, then exposes its readiness in the workspace.
 Projects provide corpus isolation, but per-user accounts, invitations, and
 project-level permissions are not implemented yet. Upgrades retain pre-project
 records in an **Imported Documents** workspace.

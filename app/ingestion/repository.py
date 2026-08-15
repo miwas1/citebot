@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, or_, select, update
 
 from app.db.models import (
     ChunkRecord,
@@ -224,22 +224,93 @@ class IngestionRepository:
             return self._to_job_response(record)
 
     async def has_active_or_completed_job(
-        self, source_path: str, project_id: str = DEFAULT_PROJECT_ID
+        self,
+        source_path: str,
+        project_id: str = DEFAULT_PROJECT_ID,
+        expected_documents: int | None = None,
     ) -> bool:
         """Check whether a bootstrap source already has durable ingestion work."""
 
         source_paths = {source_path, str(Path(source_path).resolve())}
         async with self._session_manager.session() as session:
-            count = await session.scalar(
+            status_clause = IngestionJobRecord.status.in_(["queued", "running"])
+            if expected_documents is None:
+                status_clause = IngestionJobRecord.status.in_(
+                    ["queued", "running", "completed"]
+                )
+            else:
+                status_clause = or_(
+                    status_clause,
+                    (
+                        (IngestionJobRecord.status == "completed")
+                        & (IngestionJobRecord.documents_seen == expected_documents)
+                    ),
+                )
+            query = (
                 select(func.count())
                 .select_from(IngestionJobRecord)
                 .where(
                     IngestionJobRecord.source_path.in_(source_paths),
                     IngestionJobRecord.project_id == project_id,
-                    IngestionJobRecord.status.in_(["queued", "running", "completed"]),
+                    status_clause,
                 )
             )
+            count = await session.scalar(query)
         return bool(count)
+
+    async def prune_stale_sample_documents(
+        self,
+        project_id: str,
+        allowed_source_uris: set[str],
+        sample_path: Path,
+    ) -> int:
+        """Remove bundled sample documents absent from the current corpus version."""
+
+        if not allowed_source_uris:
+            return 0
+        sample_prefix = f"{sample_path.resolve()}%"
+        async with self._session_manager.session() as session:
+            stale_document_ids = list(
+                (
+                    await session.scalars(
+                        select(DocumentRecord.document_id).where(
+                            DocumentRecord.project_id == project_id,
+                            DocumentRecord.source_uri.not_in(allowed_source_uris),
+                            or_(
+                                DocumentRecord.publisher == "arXiv",
+                                DocumentRecord.source_uri.like(sample_prefix),
+                                DocumentRecord.source_uri == "local://roadmap-notes",
+                            ),
+                        )
+                    )
+                ).all()
+            )
+            if not stale_document_ids:
+                return 0
+            stale_version_ids = select(DocumentVersionRecord.version_id).where(
+                DocumentVersionRecord.document_id.in_(stale_document_ids)
+            )
+            await session.execute(
+                delete(SourceAnchorRecord).where(
+                    SourceAnchorRecord.version_id.in_(stale_version_ids)
+                )
+            )
+            await session.execute(
+                delete(DocumentVersionRecord).where(
+                    DocumentVersionRecord.document_id.in_(stale_document_ids)
+                )
+            )
+            await session.execute(
+                delete(ChunkRecord).where(
+                    ChunkRecord.document_id.in_(stale_document_ids)
+                )
+            )
+            await session.execute(
+                delete(DocumentRecord).where(
+                    DocumentRecord.document_id.in_(stale_document_ids)
+                )
+            )
+            return len(stale_document_ids)
 
     async def get_document_state(
         self, project_id: str, source_uri: str | None = None

@@ -169,10 +169,12 @@ class IngestionService:
         documents_indexed = 0
         documents_skipped = 0
         chunks_written = 0
+        source_uris_seen: set[str] = set()
 
         try:
             for loaded_document in self._loader.iter_load(source_path):
                 documents_seen += 1
+                source_uris_seen.add(loaded_document.source_uri)
                 if worker_id is not None:
                     await self._repository.heartbeat(
                         job_id,
@@ -225,6 +227,16 @@ class IngestionService:
                 await self._pgvector_writer.upsert_chunks(document, chunks, embeddings)
                 documents_indexed += 1
                 chunks_written += len(chunks)
+            if (
+                project_id == "sample-project"
+                and source_path.resolve()
+                == self._settings.sample_corpus_path.resolve()
+            ):
+                await self._repository.prune_stale_sample_documents(
+                    project_id,
+                    source_uris_seen,
+                    source_path,
+                )
         except Exception as error:
             await self._repository.fail_job(
                 job_id=job_id,

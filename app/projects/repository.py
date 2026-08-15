@@ -49,6 +49,10 @@ class ProjectRepository:
                 )
                 session.add(record)
                 await session.flush()
+            else:
+                record.name = name
+                record.description = description
+                record.is_sample = is_sample
             return await self._summary(session, record)
 
     async def create(self, name: str, description: str | None) -> ProjectSummary:

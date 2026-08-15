@@ -15,6 +15,7 @@ from app.ingestion.service import IngestionService
 from app.projects.service import SAMPLE_PROJECT_ID
 
 logger = logging.getLogger(__name__)
+SAMPLE_CORPUS_DOCUMENT_COUNT = 100
 
 
 async def ensure_sample_corpus(
@@ -45,7 +46,9 @@ async def ensure_sample_corpus(
             return None
         try:
             already_scheduled = await repository.has_active_or_completed_job(
-                str(source_path.resolve()), SAMPLE_PROJECT_ID
+                str(source_path.resolve()),
+                SAMPLE_PROJECT_ID,
+                SAMPLE_CORPUS_DOCUMENT_COUNT,
             )
         except TypeError:
             # Compatibility with small test/dry-run repository adapters.

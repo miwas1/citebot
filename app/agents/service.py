@@ -161,6 +161,7 @@ class ResearchAgentService:
         nodes = {
             "validate_input": self._validate_input,
             "classify_query": self._classify_query,
+            "conversational_response": self._conversational_response,
             "rewrite_query": self._rewrite_query,
             "plan_retrieval": self._plan_retrieval,
             "hybrid_retrieval": self._hybrid_retrieval,
@@ -183,7 +184,12 @@ class ResearchAgentService:
             self._route_after_validation,
             ["classify_query", "error_handler"],
         )
-        graph.add_edge("classify_query", "rewrite_query")
+        graph.add_conditional_edges(
+            "classify_query",
+            self._route_after_classification,
+            ["conversational_response", "rewrite_query"],
+        )
+        graph.add_edge("conversational_response", "final_response_formatting")
         graph.add_edge("rewrite_query", "plan_retrieval")
         graph.add_edge("plan_retrieval", "hybrid_retrieval")
         graph.add_conditional_edges(
@@ -234,6 +240,19 @@ class ResearchAgentService:
         query = state["query"]
         reason_codes: list[str] = []
         lowered = query.lower()
+        conversational_reply = _conversational_reply(query)
+        if conversational_reply is not None:
+            return {
+                "retrieval_plan": RetrievalPlan(
+                    retrieval_required=False,
+                    top_k=request.top_k or self._settings.research_top_k,
+                    reason_codes=["conversational"],
+                ),
+                "state_transitions": _append_transition(state, "classify_query"),
+                "token_usage": _with_token_usage(
+                    state, "query_classification", query
+                ),
+            }
         if request.freshness_required or any(
             token in lowered for token in ("latest", "recent", "today", "current")
         ):
@@ -250,6 +269,32 @@ class ResearchAgentService:
             ),
             "state_transitions": _append_transition(state, "classify_query"),
             "token_usage": _with_token_usage(state, "query_classification", query),
+        }
+
+    async def _conversational_response(
+        self, state: ResearchAgentState
+    ) -> ResearchAgentState:
+        """Answer simple conversational turns without searching project sources."""
+
+        reply = _conversational_reply(state["query"])
+        if reply is None:
+            reply = "What would you like to research in this project?"
+        answer = ResearchAnswer(
+            direct_answer=reply,
+            answer_status="supported",
+        )
+        return {
+            "draft_answer": answer,
+            "verification": CitationVerificationResult(
+                overall_verdict="supported",
+                verification_version="not-applicable",
+            ),
+            "state_transitions": _append_transition(
+                state, "conversational_response"
+            ),
+            "token_usage": _with_token_usage(
+                state, "conversational_response", reply
+            ),
         }
 
     async def _rewrite_query(self, state: ResearchAgentState) -> ResearchAgentState:
@@ -585,6 +630,16 @@ class ResearchAgentService:
 
         return "error_handler" if state.get("error") else "classify_query"
 
+    async def _route_after_classification(
+        self,
+        state: ResearchAgentState,
+    ) -> Literal["conversational_response", "rewrite_query"]:
+        """Skip retrieval for greetings and other simple conversational turns."""
+
+        if not state["retrieval_plan"].retrieval_required:
+            return "conversational_response"
+        return "rewrite_query"
+
     async def _route_after_retrieval(
         self,
         state: ResearchAgentState,
@@ -717,6 +772,33 @@ def _append_transition(state: ResearchAgentState, name: str) -> list[str]:
     """Append one state transition name to the execution trace."""
 
     return state.get("state_transitions", []) + [name]
+
+
+def _conversational_reply(query: str) -> str | None:
+    """Return a deterministic reply for narrow non-research conversational input."""
+
+    normalized = " ".join(query.casefold().split()).strip(".!?,;: ")
+    if normalized in {
+        "hi",
+        "hi there",
+        "hello",
+        "hello there",
+        "hey",
+        "hey there",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "greetings",
+    }:
+        return "Hi! What would you like to research in this project?"
+    if normalized in {"thanks", "thank you", "thank you very much", "thx"}:
+        return "You’re welcome! What else would you like to research?"
+    if normalized in {"who are you", "what can you do", "help"}:
+        return (
+            "I’m CiteBot. I can answer questions about this project’s documents "
+            "and show the sources supporting each research answer."
+        )
+    return None
 
 
 def _with_token_usage(
