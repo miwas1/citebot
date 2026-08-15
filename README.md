@@ -96,7 +96,7 @@ workspace instead.
 Services started:
 
 - CiteBot through Caddy on `http://127.0.0.1/`
-- Dozzle through Caddy on `http://127.0.0.1:8888/`
+- Dozzle through Caddy on `http://127.0.0.1/dozzle/` and port `8888`
 - local embedding service on the private Compose network
 - local llama.cpp server on the private Compose network
 - Qdrant on the private Compose network
@@ -171,7 +171,7 @@ service to the network.
 The default public URLs are:
 
 - CiteBot: `http://<server-ip>/`
-- Dozzle: `http://<server-ip>:8888/`
+- Dozzle: `http://<server-ip>/dozzle/` (or `http://<server-ip>:8888/`)
 
 Dozzle has no authentication configured by this Compose file. Restrict port
 8888 in the EC2 security group or put authentication/VPN access in front of it

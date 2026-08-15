@@ -11,9 +11,23 @@
         -Server
     }
 
-    reverse_proxy api:8000
+    redir /dozzle /dozzle/ 308
+
+    handle /dozzle/* {
+        reverse_proxy dozzle:8080 {
+            flush_interval -1
+        }
+    }
+
+    handle {
+        reverse_proxy api:8000
+    }
 }
 
 :8888 {
-    reverse_proxy dozzle:8080
+    redir / /dozzle/ 308
+
+    reverse_proxy dozzle:8080 {
+        flush_interval -1
+    }
 }

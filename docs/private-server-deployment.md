@@ -88,8 +88,9 @@ as soon as their status becomes **Ready**. The bootstrap is idempotent and can
 be disabled with `SAMPLE_CORPUS_AUTO_INGEST=false`.
 
 The API is reachable internally at `http://127.0.0.1:8000`. Caddy publishes
-CiteBot on port 80 and Dozzle on port 8888. Qdrant, embedding, and LLM ports
-remain exposed only on the internal Compose network.
+CiteBot on port 80 and Dozzle at `/dozzle/` on the same listener, with port 8888
+as an optional dedicated listener. Qdrant, embedding, and LLM ports remain
+exposed only on the internal Compose network.
 
 ## 4. Optional: put HTTPS in front
 
