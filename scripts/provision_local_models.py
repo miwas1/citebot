@@ -16,6 +16,7 @@ import re
 import shutil
 import sys
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -149,10 +150,14 @@ def load_provisioning_environment(
 
 
 def provision(
-    specs: list[ArtifactSpec], root: Path, client: HuggingFaceClient
+    specs: list[ArtifactSpec],
+    root: Path,
+    client: HuggingFaceClient,
+    environment: Mapping[str, str] | None = None,
 ) -> list[ResolvedArtifact]:
     """Download every model snapshot and return immutable metadata for the manifest."""
 
+    configuration = os.environ if environment is None else environment
     root.mkdir(parents=True, exist_ok=True)
     resolved: list[ResolvedArtifact] = []
     for spec in specs:
@@ -168,7 +173,7 @@ def provision(
             raise RuntimeError(
                 f"Model metadata for {spec.repository} did not include an immutable revision"
             )
-        files = snapshot_files(metadata, spec)
+        files = snapshot_files(metadata, spec, configuration)
         print(f"Downloading {spec.name} from {spec.repository}@{commit[:12]} ({len(files)} files)")
         for filename in files:
             target = (
@@ -185,7 +190,11 @@ def provision(
     return resolved
 
 
-def snapshot_files(metadata: dict[str, Any], spec: ArtifactSpec) -> list[str]:
+def snapshot_files(
+    metadata: dict[str, Any],
+    spec: ArtifactSpec,
+    environment: Mapping[str, str] | None = None,
+) -> list[str]:
     """Return a full snapshot or one explicitly selected GGUF."""
 
     siblings = metadata.get("siblings")
@@ -194,7 +203,10 @@ def snapshot_files(metadata: dict[str, Any], spec: ArtifactSpec) -> list[str]:
     names = [item.get("rfilename") for item in siblings if isinstance(item, dict)]
     files = [name for name in names if isinstance(name, str) and name and not name.endswith("/")]
     if spec.name == "phi-4-mini-instruct-q4":
-        expected = os.environ.get("LLM_MODEL_FILENAME", "microsoft_Phi-4-mini-instruct-Q4_K_M.gguf")
+        configuration = os.environ if environment is None else environment
+        expected = configuration.get(
+            "LLM_MODEL_FILENAME", "microsoft_Phi-4-mini-instruct-Q4_K_M.gguf"
+        )
         if expected not in files:
             raise RuntimeError(f"{expected} is not available in {spec.repository}@{spec.revision}")
         return [expected]
@@ -302,7 +314,7 @@ def main() -> int:
         endpoint=environment.get("HF_ENDPOINT", DEFAULT_HF_ENDPOINT),
         token=environment.get("HF_TOKEN"),
     )
-    artifacts = provision(specs, root, client)
+    artifacts = provision(specs, root, client, environment)
     manifest = write_manifest(root, artifacts)
     print(f"Wrote offline manifest: {manifest}")
     return 0

@@ -20,6 +20,7 @@ COPY uv.lock ./
 COPY app ./app
 COPY docs ./docs
 COPY data ./data
+COPY scripts ./scripts
 
 # Install dependencies using uv
 RUN uv sync --frozen --no-dev --extra ocr

@@ -8,6 +8,13 @@ import os
 import sys
 from pathlib import Path
 
+REQUIRED_RUNTIME_PATHS = (
+    Path("bge-small-en-v1.5"),
+    Path("phi-4-mini-instruct-q4.gguf"),
+    Path("paddleocr/detection"),
+    Path("paddleocr/recognition"),
+)
+
 
 def main() -> int:
     """Validate every artifact declared by MODEL_MANIFEST_PATH."""
@@ -24,12 +31,14 @@ def main() -> int:
         print("manifest must contain a non-empty artifacts list", file=sys.stderr)
         return 2
     failures: list[str] = []
+    declared_paths: set[Path] = set()
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             failures.append("artifact entry is not an object")
             continue
         raw_path = Path(str(artifact.get("path", "")))
         path = raw_path if raw_path.is_absolute() else manifest_path.parent / raw_path
+        declared_paths.add(raw_path)
         if not path.exists():
             failures.append(f"missing: {path}")
             continue
@@ -40,6 +49,9 @@ def main() -> int:
         expected_sha = str(artifact.get("sha256", ""))
         if expected_sha and actual_sha != expected_sha:
             failures.append(f"sha256 mismatch: {path}")
+    for required_path in REQUIRED_RUNTIME_PATHS:
+        if required_path not in declared_paths:
+            failures.append(f"runtime artifact is not declared: {required_path}")
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1

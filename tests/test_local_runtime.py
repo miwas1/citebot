@@ -230,6 +230,37 @@ def test_model_provisioner_downloads_into_compose_paths(tmp_path: Path) -> None:
     verify_model_manifest(manifest)
 
 
+def test_model_provisioner_uses_loaded_environment_for_gguf_filename(
+    tmp_path: Path,
+) -> None:
+    """The selected GGUF filename comes from the loaded environment, including .env."""
+
+    class FakeHuggingFaceClient:
+        def model_info(self, repository: str, revision: str) -> dict[str, object]:
+            filename = "custom-phi.gguf" if "Phi-4" in repository else "config.json"
+            return {
+                "sha": "c" * 40,
+                "cardData": {"license": "apache-2.0"},
+                "siblings": [{"rfilename": filename}],
+            }
+
+        def download_file(
+            self, repository: str, commit: str, filename: str, target: Path
+        ) -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(filename, encoding="utf-8")
+
+    artifacts = provision(
+        build_specs({}),
+        tmp_path,
+        FakeHuggingFaceClient(),
+        {"LLM_MODEL_FILENAME": "custom-phi.gguf"},
+    )
+
+    assert (tmp_path / "phi-4-mini-instruct-q4.gguf").read_text() == "custom-phi.gguf"
+    assert artifacts[1].spec.name == "phi-4-mini-instruct-q4"
+
+
 def test_model_provisioner_reads_dotenv_without_overriding_shell(tmp_path: Path) -> None:
     """Provisioning defaults are configurable from `.env` and shell values win."""
 
