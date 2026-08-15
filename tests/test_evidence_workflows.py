@@ -18,6 +18,7 @@ from app.agents.service import ResearchAgentService
 from app.calculation.schemas import CalculationCell, CalculationPlan
 from app.calculation.service import CalculationService
 from app.core.config import Settings
+from app.db.session import DatabaseSessionManager
 from app.diffing.schemas import ElementSnapshot
 from app.diffing.service import DocumentDiffService
 from app.evidence.service import EvidenceService
@@ -31,7 +32,7 @@ from app.ingestion.schemas import (
     StructuredPage,
 )
 from app.tools.citation_verifier import CitationVerifier
-from app.workflows.checkpointer import SQLiteCheckpointSaver
+from app.workflows.checkpointer import DatabaseCheckpointSaver
 from app.workflows.review import transition
 from app.workflows.review_gate import ReviewGate
 from app.workflows.schemas import WorkProduct
@@ -260,8 +261,8 @@ async def test_research_agent_completes_full_evidence_graph() -> None:
 
     settings = Settings(
         runtime_mode="offline",
+        database_url="postgresql+asyncpg://citebot:citebot@postgres:5432/citebot",
         answer_provider="local",
-        enable_qdrant=False,
         research_min_context_score=0.0,
     )
     store = Store()
@@ -286,9 +287,13 @@ async def test_research_agent_completes_full_evidence_graph() -> None:
 
 @pytest.mark.asyncio
 async def test_review_gate_checkpoint_survives_lookup_and_resume(tmp_path) -> None:
-    """LangGraph review interrupts can resume from the local SQLite checkpoint."""
+    """LangGraph review interrupts resume from the primary database."""
 
-    saver = SQLiteCheckpointSaver(tmp_path / "checkpoints.sqlite3")
+    manager = DatabaseSessionManager(
+        f"sqlite+aiosqlite:///{tmp_path / 'primary.db'}"
+    )
+    await manager.initialize()
+    saver = DatabaseCheckpointSaver(manager)
     gate = ReviewGate(saver)
     product = WorkProduct(
         work_product_id="wp",
@@ -301,6 +306,10 @@ async def test_review_gate_checkpoint_survives_lookup_and_resume(tmp_path) -> No
     )
     interrupted = await gate.start(product)
     assert "__interrupt__" in interrupted
-    assert saver.get_tuple({"configurable": {"thread_id": "run-1"}}) is not None
+    assert (
+        await saver.aget_tuple({"configurable": {"thread_id": "run-1"}})
+        is not None
+    )
     resumed = await gate.resume("run-1", "approve", "Reviewed")
     assert resumed["decision"] == "approve"
+    await manager.close()

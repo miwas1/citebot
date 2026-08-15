@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 async def run_worker() -> None:
-    """Run the SQLite-backed ingestion queue until interrupted."""
+    """Run the PostgreSQL-backed ingestion queue until interrupted."""
 
     settings = get_settings()
     container = build_container(settings)

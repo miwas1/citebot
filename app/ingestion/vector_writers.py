@@ -1,10 +1,9 @@
-"""Writers for pgvector and Qdrant embedding indexes."""
+"""Writer for the PostgreSQL pgvector embedding index."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-import httpx
 from sqlalchemy import text
 
 from app.db.session import DatabaseSessionManager
@@ -17,21 +16,23 @@ class PgVectorWriter:
     def __init__(
         self,
         session_manager: DatabaseSessionManager,
-        enabled: bool,
         vector_size: int,
     ) -> None:
         """Store the shared database session manager and vector settings."""
 
         self._session_manager = session_manager
-        self._enabled = enabled
         self._vector_size = vector_size
 
     async def initialize(self) -> None:
         """Create the pgvector extension and embedding table when enabled."""
 
-        if not self._enabled:
+        if not self._session_manager.is_postgresql:
             return
         async with self._session_manager.session() as session:
+            # Avoid concurrent extension/table/index DDL from API and worker startup.
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(734867320240815002)")
+            )
             await session.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await session.execute(
                 text(
@@ -44,7 +45,11 @@ class PgVectorWriter:
                         index_version TEXT NOT NULL,
                         embedding VECTOR({self._vector_size}) NOT NULL,
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                        PRIMARY KEY (chunk_id, embedding_version, index_version)
+                        PRIMARY KEY (chunk_id, embedding_version, index_version),
+                        FOREIGN KEY (chunk_id) REFERENCES chunks(chunk_id)
+                            ON DELETE CASCADE,
+                        FOREIGN KEY (document_id) REFERENCES documents(document_id)
+                            ON DELETE CASCADE
                     )
                     """
                 )
@@ -52,11 +57,37 @@ class PgVectorWriter:
             await session.execute(
                 text(
                     """
-                    CREATE INDEX IF NOT EXISTS chunk_embeddings_lookup_idx
-                    ON chunk_embeddings (document_id, embedding_version, index_version)
+                    CREATE INDEX IF NOT EXISTS chunk_embeddings_vector_hnsw_idx
+                    ON chunk_embeddings USING hnsw (embedding vector_cosine_ops)
                     """
                 )
             )
+            await session.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS chunk_embeddings_filter_idx
+                    ON chunk_embeddings (embedding_version, index_version, document_id)
+                    """
+                )
+            )
+            stored_type = await session.scalar(
+                text(
+                    """
+                    SELECT format_type(attribute.atttypid, attribute.atttypmod)
+                    FROM pg_attribute AS attribute
+                    JOIN pg_class AS relation ON relation.oid = attribute.attrelid
+                    WHERE relation.relname = 'chunk_embeddings'
+                      AND attribute.attname = 'embedding'
+                      AND attribute.attnum > 0
+                    """
+                )
+            )
+            expected_type = f"vector({self._vector_size})"
+            if stored_type != expected_type:
+                raise RuntimeError(
+                    "pgvector dimension mismatch: "
+                    f"database has {stored_type}, configuration requires {expected_type}"
+                )
 
     async def upsert_chunks(
         self,
@@ -66,10 +97,15 @@ class PgVectorWriter:
     ) -> None:
         """Upsert embeddings for the provided chunks into PostgreSQL."""
 
-        if not self._enabled or not chunks:
+        if not self._session_manager.is_postgresql or not chunks:
             return
         async with self._session_manager.session() as session:
             for chunk, embedding in zip(chunks, embeddings, strict=True):
+                if len(embedding) != self._vector_size:
+                    raise ValueError(
+                        f"Embedding for {chunk.chunk_id} has {len(embedding)} values; "
+                        f"expected {self._vector_size}"
+                    )
                 embedding_literal = (
                     "[" + ",".join(f"{value:.8f}" for value in embedding) + "]"
                 )
@@ -108,151 +144,3 @@ class PgVectorWriter:
                         "embedding": embedding_literal,
                     },
                 )
-
-
-class QdrantWriter:
-    """Write chunk embeddings into a Qdrant collection via HTTP."""
-
-    def __init__(self, base_url: str, collection_name: str, enabled: bool) -> None:
-        """Store the Qdrant endpoint, collection, and enablement flag."""
-
-        self._base_url = base_url.rstrip("/")
-        self._collection_name = collection_name
-        self._enabled = enabled
-
-    async def ping(self) -> bool:
-        """Check whether the Qdrant server responds to a collection listing request."""
-
-        if not self._enabled:
-            return True
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(f"{self._base_url}/collections")
-                response.raise_for_status()
-        except Exception:
-            return False
-        return True
-
-    async def ensure_collection(self, vector_size: int) -> None:
-        """Create the target Qdrant collection when it does not yet exist."""
-
-        if not self._enabled:
-            return
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(
-                f"{self._base_url}/collections/{self._collection_name}"
-            )
-            if response.status_code == 200:
-                payload = response.json().get("result", {})
-                configured = (
-                    payload.get("config", {})
-                    .get("params", {})
-                    .get("vectors", {})
-                )
-                configured_size = configured.get("size")
-                if configured_size is not None and int(configured_size) != vector_size:
-                    raise ValueError(
-                        f"Qdrant collection {self._collection_name} has dimension "
-                        f"{configured_size}, expected {vector_size}; use a new version"
-                    )
-                await self._ensure_project_payload_index(client)
-                return
-            create_response = await client.put(
-                f"{self._base_url}/collections/{self._collection_name}",
-                json={"vectors": {"size": vector_size, "distance": "Cosine"}},
-            )
-            create_response.raise_for_status()
-            await self._ensure_project_payload_index(client)
-
-    async def _ensure_project_payload_index(self, client: httpx.AsyncClient) -> None:
-        """Create an exact-match payload index for project isolation."""
-
-        response = await client.put(
-            f"{self._base_url}/collections/{self._collection_name}/index",
-            json={"field_name": "project_id", "field_schema": "keyword"},
-        )
-        if response.status_code not in {200, 201, 202, 400, 409}:
-            response.raise_for_status()
-
-    async def upsert_chunks(
-        self,
-        document: CanonicalDocument,
-        chunks: Sequence[ChunkPayload],
-        embeddings: Sequence[Sequence[float]],
-    ) -> None:
-        """Upsert chunk embeddings and payload metadata into Qdrant."""
-
-        if not self._enabled or not chunks:
-            return
-        await self.ensure_collection(len(embeddings[0]))
-        await self._mark_document_stale(document.document_id)
-        points = []
-        for chunk, embedding in zip(chunks, embeddings, strict=True):
-            points.append(
-                {
-                    "id": chunk.chunk_id,
-                    "vector": list(embedding),
-                    "payload": {
-                        "document_id": chunk.document_id,
-                        "project_id": document.project_id,
-                        "source_uri": document.source_uri,
-                        "title": document.title,
-                        "location_marker": chunk.location_marker,
-                        "access_policy": document.access_policy,
-                        "metadata": document.metadata,
-                        "text": chunk.text,
-                        "embedding_model": chunk.embedding_model,
-                        "embedding_version": chunk.embedding_version,
-                        "index_version": chunk.index_version,
-                        "element_ids": chunk.element_ids,
-                        "bbox_refs": [list(box) for box in chunk.bbox_refs],
-                        "extraction_method": chunk.extraction_method,
-                        "min_confidence": chunk.min_confidence,
-                        "parent_chunk_id": chunk.parent_chunk_id,
-                        "chunk_level": chunk.chunk_level,
-                        "heading_path": chunk.heading_path,
-                        "content_hash": chunk.content_hash,
-                        "version_id": chunk.version_id,
-                        "is_current": chunk.is_current,
-                        "ordinal": chunk.ordinal,
-                        "source_anchor_ids": chunk.source_anchor_ids,
-                    },
-                }
-            )
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.put(
-                f"{self._base_url}/collections/{self._collection_name}/points?wait=true",
-                json={"points": points},
-            )
-            response.raise_for_status()
-
-    async def _mark_document_stale(self, document_id: str) -> None:
-        """Keep prior Qdrant versions available while making current filtering accurate."""
-
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                f"{self._base_url}/collections/{self._collection_name}/points/scroll",
-                json={
-                    "filter": {
-                        "must": [
-                            {"key": "document_id", "match": {"value": document_id}},
-                            {"key": "is_current", "match": {"value": True}},
-                        ]
-                    },
-                    "limit": 1000,
-                    "with_payload": False,
-                    "with_vector": False,
-                },
-            )
-            response.raise_for_status()
-            point_ids = [
-                point["id"]
-                for point in response.json().get("result", {}).get("points", [])
-            ]
-            if not point_ids:
-                return
-            update = await client.put(
-                f"{self._base_url}/collections/{self._collection_name}/points/payload?wait=true",
-                json={"payload": {"is_current": False}, "points": point_ids},
-            )
-            update.raise_for_status()

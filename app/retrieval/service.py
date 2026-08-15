@@ -6,14 +6,12 @@ import json
 import math
 from typing import Any
 
-import httpx
 from sqlalchemy import text
 
 from app.core.config import Settings
 from app.db.session import DatabaseSessionManager
 from app.ingestion.embedder import BaseEmbedder
 from app.ingestion.schemas import RetrievalFilters, SearchRequest, SearchResult
-from app.ingestion.sparse_index import SparseIndex
 from app.retrieval.repository import IndexedChunkRecord, RetrievalRepository
 from app.retrieval.reranker import BaseReranker
 
@@ -80,6 +78,134 @@ class LocalDenseRetriever:
         return True
 
 
+class DatabaseSparseRetriever:
+    """Sparse full-text retrieval from the primary relational database."""
+
+    def __init__(
+        self,
+        session_manager: DatabaseSessionManager,
+        repository: RetrievalRepository,
+        max_candidates: int,
+    ) -> None:
+        self._session_manager = session_manager
+        self._repository = repository
+        self._max_candidates = max_candidates
+
+    async def search(
+        self,
+        query: str,
+        top_k: int,
+        filters: RetrievalFilters,
+    ) -> list[SearchResult]:
+        """Rank matches with PostgreSQL FTS, with a bounded test-dialect fallback."""
+
+        if not self._session_manager.is_postgresql:
+            return await self._search_test_dialect(query, top_k, filters)
+        clauses, parameters = _postgres_filter_sql(filters)
+        parameters.update({"query": query, "top_k": top_k})
+        statement = text(
+            f"""
+            WITH search_query AS (
+                SELECT websearch_to_tsquery('english', :query) AS value
+            )
+            SELECT
+                c.chunk_id,
+                c.document_id,
+                d.project_id,
+                c.embedding_version,
+                c.index_version,
+                c.text,
+                c.location_marker,
+                c.section,
+                c.page,
+                c.element_ids,
+                c.bbox_refs,
+                c.extraction_method,
+                c.min_confidence,
+                c.parent_chunk_id,
+                c.chunk_level,
+                c.heading_path,
+                c.content_hash,
+                c.version_id,
+                c.is_current,
+                c.ordinal,
+                c.source_anchor_ids,
+                d.title,
+                d.source_uri,
+                d.access_policy,
+                d.metadata_json,
+                ts_rank_cd(
+                    to_tsvector('english', coalesce(c.text, '')),
+                    search_query.value
+                ) AS rank_score
+            FROM chunks AS c
+            JOIN documents AS d ON d.document_id = c.document_id
+            CROSS JOIN search_query
+            WHERE to_tsvector('english', coalesce(c.text, '')) @@ search_query.value
+              AND {' AND '.join(clauses)}
+            ORDER BY rank_score DESC, c.chunk_id
+            LIMIT :top_k
+            """
+        )
+        async with self._session_manager.session() as session:
+            rows = (await session.execute(statement, parameters)).mappings().all()
+        return [
+            _build_result(
+                chunk=_row_to_chunk(dict(row)),
+                score=float(row["rank_score"]),
+                sparse_score=float(row["rank_score"]),
+                source_backend="postgres-fts",
+            )
+            for row in rows
+        ]
+
+    async def health_check(self) -> bool:
+        """Return whether PostgreSQL full-text search is available."""
+
+        if not self._session_manager.is_postgresql:
+            return True
+        try:
+            async with self._session_manager.session() as session:
+                await session.execute(
+                    text("SELECT to_tsvector('english', 'health check')")
+                )
+        except Exception:
+            return False
+        return True
+
+    async def _search_test_dialect(
+        self,
+        query: str,
+        top_k: int,
+        filters: RetrievalFilters,
+    ) -> list[SearchResult]:
+        """Provide deterministic bounded sparse matching for dependency-free tests."""
+
+        terms = [term for term in query.lower().split() if term][:64]
+        if not terms:
+            return []
+        chunks = await self._repository.list_chunks(
+            filters,
+            limit=self._max_candidates,
+        )
+        ranked: list[tuple[float, IndexedChunkRecord]] = []
+        for chunk in chunks:
+            haystack = f"{chunk.title} {chunk.text}".lower()
+            score = float(sum(haystack.count(term) for term in terms))
+            if score > 0:
+                ranked.append((score, chunk))
+        ranked.sort(key=lambda item: (-item[0], item[1].chunk_id))
+        return [
+            _build_result(
+                chunk=chunk,
+                score=score,
+                sparse_score=score,
+                source_backend="database-sparse-test",
+            )
+            for score, chunk in ranked[:top_k]
+        ]
+
+
 class PgVectorDenseRetriever:
     """Dense retriever backed by the pgvector storage table."""
 
@@ -104,29 +230,79 @@ class PgVectorDenseRetriever:
         if not self._enabled:
             msg = "pgvector search is disabled"
             raise RetrievalBackendUnavailableError(msg)
-        rows = await self._load_rows()
-        results: list[SearchResult] = []
-        for row in rows:
-            if not _matches_filters(row, filters):
-                continue
-            embedding = _parse_vector_literal(row["embedding"])
-            score = _cosine_similarity(query_embedding, embedding)
-            if score <= 0:
-                continue
-            results.append(
-                _build_result(
-                    chunk=_row_to_chunk(row),
-                    score=score,
-                    dense_score=score,
-                    source_backend="pgvector",
-                )
+        if not self._session_manager.is_postgresql:
+            msg = "pgvector requires PostgreSQL"
+            raise RetrievalBackendUnavailableError(msg)
+        clauses, parameters = _postgres_filter_sql(filters)
+        parameters.update(
+            {
+                "query_embedding": _vector_literal(query_embedding),
+                "top_k": top_k,
+            }
+        )
+        try:
+            async with self._session_manager.session() as session:
+                await session.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
+                rows = (
+                    await session.execute(
+                        text(
+                            f"""
+                            SELECT
+                                ce.chunk_id,
+                                ce.document_id,
+                                d.project_id,
+                                ce.embedding_version,
+                                ce.index_version,
+                                c.text,
+                                c.location_marker,
+                                c.section,
+                                c.page,
+                                c.element_ids,
+                                c.bbox_refs,
+                                c.extraction_method,
+                                c.min_confidence,
+                                c.parent_chunk_id,
+                                c.chunk_level,
+                                c.heading_path,
+                                c.content_hash,
+                                c.version_id,
+                                c.is_current,
+                                c.ordinal,
+                                c.source_anchor_ids,
+                                d.title,
+                                d.source_uri,
+                                d.access_policy,
+                                d.metadata_json,
+                                1 - (ce.embedding <=> CAST(:query_embedding AS vector))
+                                    AS rank_score
+                            FROM chunk_embeddings AS ce
+                            JOIN chunks AS c ON c.chunk_id = ce.chunk_id
+                            JOIN documents AS d ON d.document_id = ce.document_id
+                            WHERE {' AND '.join(clauses)}
+                            ORDER BY ce.embedding <=> CAST(:query_embedding AS vector)
+                            LIMIT :top_k
+                            """
+                        ),
+                        parameters,
+                    )
+                ).mappings().all()
+        except Exception as error:
+            raise RetrievalBackendUnavailableError(str(error)) from error
+        return [
+            _build_result(
+                chunk=_row_to_chunk(dict(row)),
+                score=float(row["rank_score"]),
+                dense_score=float(row["rank_score"]),
+                source_backend="pgvector",
             )
-        return sorted(results, key=lambda item: item.score, reverse=True)[:top_k]
+            for row in rows
+            if float(row["rank_score"]) > 0
+        ]
 
     async def health_check(self) -> bool:
         """Return whether the pgvector-backed embedding table can be queried."""
 
-        if not self._enabled:
+        if not self._enabled or not self._session_manager.is_postgresql:
             return False
         try:
             async with self._session_manager.session() as session:
@@ -135,129 +311,6 @@ class PgVectorDenseRetriever:
             return False
         return True
 
-    async def _load_rows(self) -> list[dict[str, Any]]:
-        """Fetch joined embedding and metadata rows from PostgreSQL."""
-
-        try:
-            async with self._session_manager.session() as session:
-                result = await session.execute(
-                    text(
-                        """
-                        SELECT
-                            ce.chunk_id,
-                            ce.document_id,
-                            d.project_id,
-                            ce.embedding::text AS embedding,
-                            ce.embedding_version,
-                            ce.index_version,
-                            c.text,
-                            c.location_marker,
-                            c.section,
-                            c.page,
-                            c.element_ids,
-                            c.bbox_refs,
-                            c.extraction_method,
-                            c.min_confidence,
-                            c.parent_chunk_id,
-                            c.chunk_level,
-                            c.heading_path,
-                            c.content_hash,
-                            c.version_id,
-                            c.is_current,
-                            c.ordinal,
-                            c.source_anchor_ids,
-                            d.title,
-                            d.source_uri,
-                            d.access_policy,
-                            d.metadata_json
-                        FROM chunk_embeddings AS ce
-                        JOIN chunks AS c ON c.chunk_id = ce.chunk_id
-                        JOIN documents AS d ON d.document_id = ce.document_id
-                        """
-                    )
-                )
-        except Exception as error:
-            raise RetrievalBackendUnavailableError(str(error)) from error
-        return [dict(row._mapping) for row in result]
-
-
-class QdrantDenseRetriever:
-    """Dense retriever backed by Qdrant collection search."""
-
-    def __init__(
-        self,
-        base_url: str,
-        collection_name: str,
-        enabled: bool,
-    ) -> None:
-        """Store the Qdrant endpoint, collection name, and enablement flag."""
-
-        self._base_url = base_url.rstrip("/")
-        self._collection_name = collection_name
-        self._enabled = enabled
-
-    async def search(
-        self,
-        query_embedding: list[float],
-        filters: RetrievalFilters,
-        top_k: int,
-    ) -> list[SearchResult]:
-        """Query Qdrant and return filtered dense matches ordered by score."""
-
-        if not self._enabled:
-            msg = "qdrant search is disabled"
-            raise RetrievalBackendUnavailableError(msg)
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(
-                    (
-                        f"{self._base_url}/collections/"
-                        f"{self._collection_name}/points/search"
-                    ),
-                    json={
-                        "vector": query_embedding,
-                        "limit": max(top_k * 4, top_k),
-                        "with_payload": True,
-                        "filter": _qdrant_filter(filters),
-                    },
-                )
-                response.raise_for_status()
-        except Exception as error:
-            raise RetrievalBackendUnavailableError(str(error)) from error
-        payload = response.json()
-        points = payload.get("result", [])
-        results: list[SearchResult] = []
-        for point in points:
-            chunk = _point_to_chunk(point)
-            if not _matches_filters(chunk, filters):
-                continue
-            score = float(point.get("score", 0.0))
-            if score <= 0:
-                continue
-            results.append(
-                _build_result(
-                    chunk=chunk,
-                    score=score,
-                    dense_score=score,
-                    source_backend="qdrant",
-                )
-            )
-        return sorted(results, key=lambda item: item.score, reverse=True)[:top_k]
-
-    async def health_check(self) -> bool:
-        """Return whether Qdrant responds to a collection lookup request."""
-
-        if not self._enabled:
-            return False
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(
-                    f"{self._base_url}/collections/{self._collection_name}"
-                )
-                response.raise_for_status()
-        except Exception:
-            return False
-        return True
 
 
 class RetrievalService:
@@ -269,7 +322,6 @@ class RetrievalService:
         session_manager: DatabaseSessionManager,
         repository: RetrievalRepository,
         embedder: BaseEmbedder,
-        sparse_index: SparseIndex,
         reranker: BaseReranker | None,
     ) -> None:
         """Store retrieval dependencies and construct the available backends."""
@@ -277,7 +329,11 @@ class RetrievalService:
         self._settings = settings
         self._repository = repository
         self._embedder = embedder
-        self._sparse_index = sparse_index
+        self._sparse_retriever = DatabaseSparseRetriever(
+            session_manager,
+            repository,
+            max_candidates=settings.max_local_dense_candidates,
+        )
         self._reranker = reranker
         self._dense_backends = {
             "local": LocalDenseRetriever(
@@ -286,12 +342,7 @@ class RetrievalService:
                 max_candidates=settings.max_local_dense_candidates,
             ),
             "pgvector": PgVectorDenseRetriever(
-                session_manager, settings.enable_pgvector
-            ),
-            "qdrant": QdrantDenseRetriever(
-                base_url=settings.qdrant_url,
-                collection_name=settings.qdrant_collection,
-                enabled=settings.enable_qdrant,
+                session_manager, session_manager.is_postgresql
             ),
         }
 
@@ -300,7 +351,7 @@ class RetrievalService:
 
         dense_limit = max(request.top_k, self._settings.hybrid_candidate_count)
         if request.strategy == "sparse":
-            results = await self._sparse_index.search(
+            results = await self._sparse_retriever.search(
                 query=request.query,
                 top_k=request.top_k,
                 filters=request.filters,
@@ -320,7 +371,7 @@ class RetrievalService:
                 top_k=dense_limit,
                 index_target=request.index_target,
             )
-            sparse_results = await self._sparse_index.search(
+            sparse_results = await self._sparse_retriever.search(
                 query=request.query,
                 top_k=dense_limit,
                 filters=request.filters,
@@ -421,13 +472,12 @@ class RetrievalService:
         """Return health status for each dense backend and the sparse index."""
 
         pgvector_health = await self._dense_backends["pgvector"].health_check()
-        qdrant_health = await self._dense_backends["qdrant"].health_check()
         local_health = await self._dense_backends["local"].health_check()
+        sparse_health = await self._sparse_retriever.health_check()
         return {
             "pgvector": pgvector_health,
-            "qdrant": qdrant_health,
             "local": local_health,
-            "sparse": True,
+            "sparse": sparse_health,
         }
 
     async def explain(self, request: SearchRequest) -> list[SearchResult]:
@@ -481,20 +531,9 @@ class RetrievalService:
             return backends
         configured_primary = self._settings.dense_primary_backend
         if configured_primary == "auto":
-            configured_primary = (
-                "qdrant" if self._settings.enable_qdrant else "pgvector"
-            )
-            if configured_primary not in {"pgvector", "qdrant"}:
-                configured_primary = (
-                    "local" if self._settings.allow_local_dense_fallback else "none"
-                )
-        if configured_primary == "qdrant":
-            backends = ["qdrant", "pgvector"]
-            if self._settings.allow_local_dense_fallback:
-                backends.append("local")
-            return backends
+            configured_primary = "pgvector"
         if configured_primary == "pgvector":
-            backends = ["pgvector", "qdrant"]
+            backends = ["pgvector"]
             if self._settings.allow_local_dense_fallback:
                 backends.append("local")
             return backends
@@ -680,46 +719,38 @@ def _row_to_chunk(row: dict[str, Any]) -> IndexedChunkRecord:
     )
 
 
-def _point_to_chunk(point: dict[str, Any]) -> IndexedChunkRecord:
-    """Convert a Qdrant point payload into the shared retrieval chunk payload."""
+def _vector_literal(values: list[float]) -> str:
+    """Serialize a dense vector for pgvector's text input format."""
 
-    payload = point.get("payload", {})
-    metadata_json = payload.get("metadata") or {}
-    return IndexedChunkRecord(
-        chunk_id=str(point["id"]),
-        document_id=payload["document_id"],
-        project_id=payload.get("project_id", "sample-project"),
-        title=payload.get("title", ""),
-        source_uri=payload.get("source_uri", ""),
-        location_marker=payload.get("location_marker"),
-        text=payload.get("text", ""),
-        access_policy=payload.get("access_policy", "internal"),
-        embedding_version=payload.get("embedding_version", "v1"),
-        index_version=payload.get("index_version", "v1"),
-        section=payload.get("section"),
-        page=payload.get("page"),
-        element_ids=list(payload.get("element_ids") or []),
-        bbox_refs=list(payload.get("bbox_refs") or []),
-        extraction_method=payload.get("extraction_method"),
-        min_confidence=payload.get("min_confidence"),
-        parent_chunk_id=payload.get("parent_chunk_id"),
-        chunk_level=payload.get("chunk_level", "window"),
-        heading_path=list(payload.get("heading_path") or []),
-        version_id=payload.get("version_id"),
-        is_current=bool(payload.get("is_current", True)),
-        source_anchor_ids=list(payload.get("source_anchor_ids") or []),
-        ordinal=int(payload.get("ordinal", 0)),
-        document_metadata=dict(metadata_json),
-    )
+    return "[" + ",".join(f"{value:.8f}" for value in values) + "]"
 
 
-def _parse_vector_literal(vector_literal: str) -> list[float]:
-    """Parse a pgvector text literal into a list of floats."""
+def _postgres_filter_sql(
+    filters: RetrievalFilters,
+) -> tuple[list[str], dict[str, Any]]:
+    """Build project-scoped PostgreSQL predicates for both retrieval modes."""
 
-    stripped = vector_literal.strip()[1:-1]
-    if not stripped:
-        return []
-    return [float(value) for value in stripped.split(",")]
+    clauses = ["d.project_id = :project_id"]
+    parameters: dict[str, Any] = {"project_id": filters.project_id}
+    for field, values, expression in (
+        ("document_ids", filters.document_ids, "c.document_id"),
+        ("source_uris", filters.source_uris, "d.source_uri"),
+        ("access_policies", filters.access_policies, "d.access_policy"),
+        ("version_ids", filters.version_ids, "c.version_id"),
+        ("chunk_levels", filters.chunk_levels, "c.chunk_level"),
+    ):
+        if values:
+            clauses.append(f"{expression} = ANY(CAST(:{field} AS TEXT[]))")
+            parameters[field] = values
+    if filters.embedding_version is not None:
+        clauses.append("c.embedding_version = :embedding_version")
+        parameters["embedding_version"] = filters.embedding_version
+    if filters.index_version is not None:
+        clauses.append("c.index_version = :index_version")
+        parameters["index_version"] = filters.index_version
+    if filters.current_only:
+        clauses.append("c.is_current IS TRUE")
+    return clauses, parameters
 
 
 def _cosine_similarity(left: list[float], right: list[float]) -> float:
@@ -745,62 +776,3 @@ def _rrf_score(dense_rank: int | None, sparse_rank: int | None) -> float:
     if sparse_rank is not None:
         score += 1 / (constant + sparse_rank)
     return score
-
-
-def _matches_filters(
-    chunk: IndexedChunkRecord,
-    filters: RetrievalFilters,
-) -> bool:
-    """Return whether an indexed chunk satisfies the requested filters."""
-
-    if filters.document_ids and chunk.document_id not in filters.document_ids:
-        return False
-    if filters.project_id and chunk.project_id != filters.project_id:
-        return False
-    if filters.source_uris and chunk.source_uri not in filters.source_uris:
-        return False
-    if filters.access_policies and chunk.access_policy not in filters.access_policies:
-        return False
-    if (
-        filters.embedding_version is not None
-        and chunk.embedding_version != filters.embedding_version
-    ):
-        return False
-    if (
-        filters.index_version is not None
-        and chunk.index_version != filters.index_version
-    ):
-        return False
-    if filters.version_ids and chunk.version_id not in filters.version_ids:
-        return False
-    if filters.current_only and not chunk.is_current:
-        return False
-    if filters.chunk_levels and chunk.chunk_level not in filters.chunk_levels:
-        return False
-    return True
-
-
-def _qdrant_filter(filters: RetrievalFilters) -> dict[str, object]:
-    """Translate shared retrieval policy into Qdrant payload predicates."""
-
-    must: list[dict[str, object]] = [
-        {"key": "project_id", "match": {"value": filters.project_id}}
-    ]
-    for key, values in (
-        ("document_id", filters.document_ids),
-        ("source_uri", filters.source_uris),
-        ("access_policy", filters.access_policies),
-        ("version_id", filters.version_ids),
-        ("chunk_level", filters.chunk_levels),
-    ):
-        if values:
-            must.append({"key": key, "match": {"any": values}})
-    if filters.embedding_version is not None:
-        must.append(
-            {"key": "embedding_version", "match": {"value": filters.embedding_version}}
-        )
-    if filters.index_version is not None:
-        must.append({"key": "index_version", "match": {"value": filters.index_version}})
-    if filters.current_only:
-        must.append({"key": "is_current", "match": {"value": True}})
-    return {"must": must} if must else {}

@@ -49,7 +49,6 @@ async def version(settings: SettingsDependency) -> dict[str, str]:
         "embedding_model": settings.embedding_model,
         "embedding_version": settings.embedding_version,
         "answer_model": settings.answer_model,
-        "qdrant_collection": settings.qdrant_collection,
         "model_manifest_path": str(settings.model_manifest_path),
     }
 

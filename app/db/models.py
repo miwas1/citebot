@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -355,6 +365,34 @@ class ReviewCheckpointRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
+class LangGraphCheckpointRecord(Base):
+    """Serialized LangGraph continuation state in the primary database."""
+
+    __tablename__ = "langgraph_checkpoints"
+    __table_args__ = (
+        Index(
+            "ix_langgraph_checkpoint_thread",
+            "thread_id",
+            "checkpoint_ns",
+            "created_at",
+        ),
+    )
+
+    checkpoint_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    thread_id: Mapped[str] = mapped_column(String(128))
+    checkpoint_ns: Mapped[str] = mapped_column(String(128), default="")
+    parent_checkpoint_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    checkpoint_type: Mapped[str] = mapped_column(String(64))
+    checkpoint_blob: Mapped[bytes] = mapped_column(LargeBinary)
+    metadata_type: Mapped[str] = mapped_column(String(64))
+    metadata_blob: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now
     )
 
 

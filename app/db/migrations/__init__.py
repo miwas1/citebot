@@ -155,19 +155,42 @@ def _migration_003_retire_legacy_project(connection) -> None:
     )
 
 
+def _migration_004_postgres_retrieval_indexes(connection) -> None:
+    """Add PostgreSQL full-text and queue indexes used by the unified runtime."""
+
+    if connection.dialect.name != "postgresql":
+        return
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_chunks_text_fts "
+        "ON chunks USING GIN (to_tsvector('english', coalesce(text, '')))"
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_ingestion_jobs_claim "
+        "ON ingestion_jobs(status, started_at)"
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_ingestion_jobs_lease "
+        "ON ingestion_jobs(status, lease_expires_at)"
+    )
+
+
 MIGRATIONS: dict[str, Migration] = {
     "001_foundation": _migration_001_foundation,
     "002_projects": _migration_002_projects,
     "003_retire_legacy_project": _migration_003_retire_legacy_project,
+    "004_postgres_retrieval_indexes": _migration_004_postgres_retrieval_indexes,
 }
 
 
 def run_migrations(connection) -> None:
     """Run each registered migration once on the active database connection."""
 
+    timestamp_type = (
+        "TIMESTAMPTZ" if connection.dialect.name == "postgresql" else "DATETIME"
+    )
     connection.exec_driver_sql(
         "CREATE TABLE IF NOT EXISTS schema_migrations "
-        "(version VARCHAR(128) PRIMARY KEY, applied_at DATETIME NOT NULL)"
+        f"(version VARCHAR(128) PRIMARY KEY, applied_at {timestamp_type} NOT NULL)"
     )
     applied = {
         row[0]

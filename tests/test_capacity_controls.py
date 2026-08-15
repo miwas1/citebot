@@ -12,8 +12,7 @@ from app.core.admission import AdmissionRejected, BoundedAdmission
 from app.core.config import Settings
 from app.core.lifecycle import build_container
 from app.ingestion.loaders import LocalCorpusLoader
-from app.ingestion.schemas import CanonicalDocument, ChunkPayload, RetrievalFilters
-from app.ingestion.sparse_index import SparseIndex
+from app.ingestion.schemas import CanonicalDocument, ChunkPayload, RetrievalFilters, SearchRequest
 
 
 def test_16gb_defaults_are_conservative() -> None:
@@ -66,10 +65,9 @@ async def test_bounded_admission_rejects_excess_work() -> None:
                 pass
 
 
-def test_sparse_index_uses_fts_and_preserves_filters(tmp_path: Path) -> None:
-    """The sparse index is transactional SQLite FTS5, not a whole-file JSON scan."""
+def test_sparse_search_uses_primary_database_and_preserves_filters(tmp_path: Path) -> None:
+    """Sparse retrieval reads the same primary database rows as other services."""
 
-    index = SparseIndex(tmp_path / "sparse_index.json")
     document = CanonicalDocument(
         document_id="doc-1",
         source_uri="file:///one.md",
@@ -92,25 +90,39 @@ def test_sparse_index_uses_fts_and_preserves_filters(tmp_path: Path) -> None:
         index_version="i1",
     )
 
+    settings = Settings(
+        DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'citebot.db'}",
+        OBJECT_STORAGE_PATH=tmp_path / "raw",
+        STRUCTURED_DOCUMENT_PATH=tmp_path / "structured",
+        SAMPLE_CORPUS_AUTO_INGEST=False,
+        EMBEDDING_PROVIDER="local",
+        ANSWER_PROVIDER="local",
+        _env_file=None,
+    )
+    container = build_container(settings)
+
     async def exercise() -> list:
-        await index.initialize()
-        await index.replace_document_chunks(document, [chunk])
-        return await index.search(
-            "citation",
-            filters=RetrievalFilters(source_uris=[document.source_uri]),
+        await container.initialize()
+        await container.ingestion_repository.save_document(document, [chunk], "raw.txt")
+        results = await container.retrieval_service.search(
+            SearchRequest(
+                query="citation",
+                strategy="sparse",
+                filters=RetrievalFilters(source_uris=[document.source_uri]),
+            )
         )
+        await container.close()
+        return results
 
     results = asyncio.run(exercise())
     assert results and results[0].chunk_id == "chunk-1"
-    assert (tmp_path / "sparse_index.sqlite3").is_file()
 
 
 def test_offline_profile_can_disable_local_dense_fallback() -> None:
-    """The deployed Qdrant profile must not re-embed the corpus on outage."""
+    """The deployed PostgreSQL profile must not re-embed the corpus on outage."""
 
     settings = Settings(
         RUNTIME_MODE="development",
-        ENABLE_QDRANT=True,
         ALLOW_LOCAL_DENSE_FALLBACK=False,
         _env_file=None,
     )

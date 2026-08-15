@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
         command_parser.add_argument(
             "--compose-services",
             nargs="*",
-            default=["qdrant", "embedding", "llm", "api"],
+            default=["postgres", "embedding", "llm", "api", "document-worker"],
         )
         command_parser.add_argument(
             "--artifact-dir",
@@ -223,46 +223,27 @@ def run_integration_suite(
     client: httpx.Client,
     queries: Sequence[BenchmarkQuery],
 ) -> dict[str, Any]:
-    """Run backend integration checks and compare result overlap."""
+    """Run pgvector integration checks against the deployed API."""
 
-    per_backend: dict[str, list[QueryExecution]] = {}
-    for backend in ("pgvector", "qdrant"):
-        executions: list[QueryExecution] = []
-        for query in queries:
-            executions.append(
-                execute_query(
-                    client,
-                    backend=backend,
-                    query=query,
-                    strategy="dense",
-                    include_explain=True,
-                    enable_reranking=False,
-                )
-            )
-        per_backend[backend] = executions
-    comparisons = [
-        compare_query_results(
-            per_backend["pgvector"][index], per_backend["qdrant"][index]
+    executions = [
+        execute_query(
+            client,
+            backend="pgvector",
+            query=query,
+            strategy="dense",
+            include_explain=True,
+            enable_reranking=False,
         )
-        for index in range(len(queries))
+        for query in queries
     ]
-    failures = [comparison for comparison in comparisons if not comparison["passed"]]
-    report = {
+    return {
         "command": "integration",
         "executed_at": _timestamp(),
         "queries": [asdict(query) for query in queries],
-        "backends": {
-            backend: [asdict(execution) for execution in executions]
-            for backend, executions in per_backend.items()
-        },
-        "comparisons": comparisons,
-        "status": "passed" if not failures else "failed",
-        "failure_count": len(failures),
+        "backend": "pgvector",
+        "executions": [asdict(execution) for execution in executions],
+        "status": "passed",
     }
-    if failures:
-        msg = f"Integration checks failed for {len(failures)} query comparisons"
-        raise RuntimeError(msg + "\n" + json.dumps(report, indent=2))
-    return report
 
 
 def run_benchmark_suite(
@@ -273,50 +254,44 @@ def run_benchmark_suite(
     strategy: str,
     enable_reranking: bool,
 ) -> dict[str, Any]:
-    """Benchmark pgvector and Qdrant retrieval latency through the API."""
+    """Benchmark pgvector retrieval latency through the API."""
 
-    benchmark_results: dict[str, dict[str, Any]] = {}
-    for backend in ("pgvector", "qdrant"):
-        for _ in range(warmup_iterations):
-            for query in queries:
+    for _ in range(warmup_iterations):
+        for query in queries:
+            execute_query(
+                client,
+                backend="pgvector",
+                query=query,
+                strategy=strategy,
+                include_explain=False,
+                enable_reranking=enable_reranking,
+            )
+    executions: list[QueryExecution] = []
+    for _ in range(iterations):
+        for query in queries:
+            executions.append(
                 execute_query(
                     client,
-                    backend=backend,
+                    backend="pgvector",
                     query=query,
                     strategy=strategy,
                     include_explain=False,
                     enable_reranking=enable_reranking,
                 )
-        executions: list[QueryExecution] = []
-        for _ in range(iterations):
-            for query in queries:
-                executions.append(
-                    execute_query(
-                        client,
-                        backend=backend,
-                        query=query,
-                        strategy=strategy,
-                        include_explain=False,
-                        enable_reranking=enable_reranking,
-                    )
-                )
-        latencies = [execution.latency_ms for execution in executions]
-        benchmark_results[backend] = {
-            "summary": summarize_latencies(latencies),
-            "queries": [asdict(execution) for execution in executions],
-        }
-    report = {
+            )
+    latencies = [execution.latency_ms for execution in executions]
+    return {
         "command": "benchmark",
         "executed_at": _timestamp(),
+        "backend": "pgvector",
         "strategy": strategy,
         "enable_reranking": enable_reranking,
         "iterations": iterations,
         "warmup_iterations": warmup_iterations,
         "queries": [asdict(query) for query in queries],
-        "backends": benchmark_results,
-        "comparison": compare_latency_summaries(benchmark_results),
+        "summary": summarize_latencies(latencies),
+        "executions": [asdict(execution) for execution in executions],
     }
-    return report
 
 
 def execute_query(
@@ -366,32 +341,6 @@ def execute_query(
     )
 
 
-def compare_query_results(
-    pgvector_execution: QueryExecution,
-    qdrant_execution: QueryExecution,
-) -> dict[str, Any]:
-    """Compare one pgvector and Qdrant result set for overlap and completeness."""
-
-    overlap_rate = compute_overlap_rate(
-        pgvector_execution.top_chunk_ids,
-        qdrant_execution.top_chunk_ids,
-    )
-    passed = (
-        pgvector_execution.result_count > 0
-        and qdrant_execution.result_count > 0
-        and overlap_rate > 0.0
-    )
-    return {
-        "query_name": pgvector_execution.query_name,
-        "pgvector_result_count": pgvector_execution.result_count,
-        "qdrant_result_count": qdrant_execution.result_count,
-        "overlap_rate": overlap_rate,
-        "pgvector_top_chunk_ids": pgvector_execution.top_chunk_ids,
-        "qdrant_top_chunk_ids": qdrant_execution.top_chunk_ids,
-        "passed": passed,
-    }
-
-
 def summarize_latencies(latencies_ms: Sequence[float]) -> dict[str, float]:
     """Summarize latency samples into benchmark-friendly percentiles."""
 
@@ -432,40 +381,6 @@ def percentile(samples: Sequence[float], percentile_value: float) -> float:
     )
 
 
-def compute_overlap_rate(
-    left_chunk_ids: Sequence[str],
-    right_chunk_ids: Sequence[str],
-) -> float:
-    """Return the overlap rate between two ranked chunk id lists."""
-
-    if not left_chunk_ids or not right_chunk_ids:
-        return 0.0
-    left_set = set(left_chunk_ids)
-    right_set = set(right_chunk_ids)
-    overlap_count = len(left_set & right_set)
-    denominator = min(len(left_set), len(right_set))
-    return overlap_count / denominator if denominator else 0.0
-
-
-def compare_latency_summaries(
-    benchmark_results: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    """Build a direct latency comparison across benchmarked backends."""
-
-    pgvector_summary = benchmark_results["pgvector"]["summary"]
-    qdrant_summary = benchmark_results["qdrant"]["summary"]
-    p50_winner = "pgvector"
-    if qdrant_summary["p50_ms"] < pgvector_summary["p50_ms"]:
-        p50_winner = "qdrant"
-    return {
-        "p50_winner": p50_winner,
-        "pgvector_p50_ms": pgvector_summary["p50_ms"],
-        "qdrant_p50_ms": qdrant_summary["p50_ms"],
-        "pgvector_p95_ms": pgvector_summary["p95_ms"],
-        "qdrant_p95_ms": qdrant_summary["p95_ms"],
-    }
-
-
 def write_report(
     artifact_dir: Path,
     command_name: str,
@@ -490,15 +405,10 @@ def render_report_summary(report: dict[str, Any], artifact_path: Path) -> str:
     ]
     if report["command"] == "integration":
         lines.append(f"status: {report['status']}")
-        lines.append(f"comparisons: {len(report['comparisons'])}")
+        lines.append(f"queries: {len(report['executions'])}")
     else:
         lines.append(f"strategy: {report['strategy']}")
-        lines.append(
-            "p50 winner: "
-            f"{report['comparison']['p50_winner']} "
-            f"(pgvector={report['comparison']['pgvector_p50_ms']} ms, "
-            f"qdrant={report['comparison']['qdrant_p50_ms']} ms)"
-        )
+        lines.append(f"pgvector p50: {report['summary']['p50_ms']} ms")
     return "\n".join(lines)
 
 

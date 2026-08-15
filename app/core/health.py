@@ -4,7 +4,6 @@ import httpx
 
 from app.core.config import Settings
 from app.db.session import DatabaseSessionManager
-from app.ingestion.vector_writers import QdrantWriter
 
 
 class HealthService:
@@ -14,21 +13,16 @@ class HealthService:
         self,
         settings: Settings,
         session_manager: DatabaseSessionManager,
-        qdrant_writer: QdrantWriter,
     ) -> None:
         """Store the dependencies needed for liveness and readiness probes."""
 
         self._settings = settings
         self._session_manager = session_manager
-        self._qdrant_writer = qdrant_writer
 
     async def readiness(self) -> dict[str, object]:
         """Return a dependency summary and an overall readiness state."""
 
         database_ok = await self._session_manager.ping()
-        qdrant_ok = True
-        if self._settings.enable_qdrant:
-            qdrant_ok = await self._qdrant_writer.ping()
         embedding_ok = await self._ping_local_service(
             self._settings.embedding_base_url,
             self._settings.embedding_provider == "local-http",
@@ -39,7 +33,7 @@ class HealthService:
         )
         status = (
             "ready"
-            if database_ok and qdrant_ok and embedding_ok and llm_ok
+            if database_ok and embedding_ok and llm_ok
             else "degraded"
         )
         return {
@@ -48,7 +42,6 @@ class HealthService:
             "runtime_mode": self._settings.runtime_mode,
             "dependencies": {
                 "database": database_ok,
-                "qdrant": qdrant_ok,
                 "embedding": embedding_ok,
                 "llm": llm_ok,
             },

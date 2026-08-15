@@ -1,11 +1,8 @@
-"""Small SQLite-backed LangGraph checkpoint saver for local review gates."""
+"""Primary-database LangGraph checkpoint saver for review gates."""
 
 from __future__ import annotations
 
-import base64
-import sqlite3
 from collections.abc import AsyncIterator, Iterator, Sequence
-from pathlib import Path
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -16,40 +13,31 @@ from langgraph.checkpoint.base import (
     CheckpointMetadata,
     CheckpointTuple,
 )
+from sqlalchemy import delete, select
+
+from app.db.models import LangGraphCheckpointRecord
+from app.db.session import DatabaseSessionManager
 
 
-class SQLiteCheckpointSaver(BaseCheckpointSaver):
-    """Persist LangGraph checkpoints without adding a server-side dependency."""
+class DatabaseCheckpointSaver(BaseCheckpointSaver):
+    """Persist async LangGraph checkpoints in CiteBot's primary database."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, session_manager: DatabaseSessionManager) -> None:
         super().__init__()
-        self._path = path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
-
-    def _initialize(self) -> None:
-        with self._connect() as connection:
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS langgraph_checkpoints (
-                    checkpoint_id TEXT PRIMARY KEY,
-                    thread_id TEXT NOT NULL,
-                    checkpoint_ns TEXT NOT NULL,
-                    parent_checkpoint_id TEXT,
-                    checkpoint_type TEXT NOT NULL,
-                    checkpoint_blob BLOB NOT NULL,
-                    metadata_type TEXT NOT NULL,
-                    metadata_blob BLOB NOT NULL,
-                    created_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS langgraph_checkpoint_thread_idx "
-                "ON langgraph_checkpoints(thread_id, checkpoint_ns, created_at)"
-            )
+        self._session_manager = session_manager
 
     def put(
+        self,
+        config: RunnableConfig,
+        checkpoint: Checkpoint,
+        metadata: CheckpointMetadata,
+        new_versions: ChannelVersions,
+    ) -> RunnableConfig:
+        """Reject sync use because the application uses an async database engine."""
+
+        raise NotImplementedError("Use aput with CiteBot's async database")
+
+    async def aput(
         self,
         config: RunnableConfig,
         checkpoint: Checkpoint,
@@ -62,64 +50,42 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         checkpoint_type, checkpoint_blob = self.serde.dumps_typed(checkpoint)
         metadata_type, metadata_blob = self.serde.dumps_typed(metadata)
         checkpoint_id = str(checkpoint["id"])
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT OR REPLACE INTO langgraph_checkpoints(
-                    checkpoint_id, thread_id, checkpoint_ns, parent_checkpoint_id,
-                    checkpoint_type, checkpoint_blob, metadata_type, metadata_blob,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
-                """,
-                (
-                    checkpoint_id,
-                    values["thread_id"],
-                    values["checkpoint_ns"],
-                    values.get("checkpoint_id"),
-                    checkpoint_type,
-                    checkpoint_blob,
-                    metadata_type,
-                    metadata_blob,
-                ),
-            )
+        async with self._session_manager.session() as session:
+            record = await session.get(LangGraphCheckpointRecord, checkpoint_id)
+            if record is None:
+                record = LangGraphCheckpointRecord(checkpoint_id=checkpoint_id)
+                session.add(record)
+            record.thread_id = str(values["thread_id"])
+            record.checkpoint_ns = str(values["checkpoint_ns"])
+            record.parent_checkpoint_id = values.get("checkpoint_id")
+            record.checkpoint_type = checkpoint_type
+            record.checkpoint_blob = checkpoint_blob
+            record.metadata_type = metadata_type
+            record.metadata_blob = metadata_blob
         return _continuation_config(values, checkpoint_id)
 
-    async def aput(
-        self,
-        config: RunnableConfig,
-        checkpoint: Checkpoint,
-        metadata: CheckpointMetadata,
-        new_versions: ChannelVersions,
-    ) -> RunnableConfig:
-        """Async wrapper that keeps SQLite I/O off the event loop."""
-
-        return self.put(config, checkpoint, metadata, new_versions)
-
     def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
+        """Reject sync use because the application uses an async database engine."""
+
+        raise NotImplementedError("Use aget_tuple with CiteBot's async database")
+
+    async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         """Load an exact checkpoint or the latest checkpoint for a thread."""
 
         values = _config_values(config)
-        checkpoint_id = values.get("checkpoint_id")
-        query = (
-            "SELECT * FROM langgraph_checkpoints WHERE checkpoint_id = ?"
-            if checkpoint_id
-            else (
-                "SELECT * FROM langgraph_checkpoints WHERE thread_id = ? "
-                "AND checkpoint_ns = ? ORDER BY created_at DESC LIMIT 1"
+        statement = select(LangGraphCheckpointRecord)
+        if values.get("checkpoint_id"):
+            statement = statement.where(
+                LangGraphCheckpointRecord.checkpoint_id == values["checkpoint_id"]
             )
-        )
-        parameters = (checkpoint_id,) if checkpoint_id else (
-            values["thread_id"],
-            values["checkpoint_ns"],
-        )
-        with self._connect() as connection:
-            row = connection.execute(query, parameters).fetchone()
-        return _row_to_tuple(row) if row else None
-
-    async def aget_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
-        """Async checkpoint lookup."""
-
-        return self.get_tuple(config)
+        else:
+            statement = statement.where(
+                LangGraphCheckpointRecord.thread_id == values["thread_id"],
+                LangGraphCheckpointRecord.checkpoint_ns == values["checkpoint_ns"],
+            ).order_by(LangGraphCheckpointRecord.created_at.desc())
+        async with self._session_manager.session() as session:
+            record = await session.scalar(statement.limit(1))
+        return self._to_tuple(record) if record else None
 
     def list(
         self,
@@ -129,26 +95,9 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         before: RunnableConfig | None = None,
         limit: int | None = None,
     ) -> Iterator[CheckpointTuple]:
-        """List checkpoints for one thread in reverse creation order."""
+        """Reject sync use because the application uses an async database engine."""
 
-        values = _config_values(config) if config else None
-        query = "SELECT * FROM langgraph_checkpoints"
-        parameters: list[Any] = []
-        conditions: list[str] = []
-        if values:
-            conditions.extend(["thread_id = ?", "checkpoint_ns = ?"])
-            parameters.extend([values["thread_id"], values["checkpoint_ns"]])
-        if filter and "source" in filter:
-            conditions.append("metadata_blob IS NOT NULL")
-        if conditions:
-            query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY created_at DESC"
-        if limit:
-            query += " LIMIT ?"
-            parameters.append(limit)
-        with self._connect() as connection:
-            rows = connection.execute(query, parameters).fetchall()
-        yield from (_row_to_tuple(row) for row in rows)
+        raise NotImplementedError("Use alist with CiteBot's async database")
 
     async def alist(
         self,
@@ -158,11 +107,22 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         before: RunnableConfig | None = None,
         limit: int | None = None,
     ) -> AsyncIterator[CheckpointTuple]:
-        """Async checkpoint listing."""
+        """List checkpoints for one thread in reverse creation order."""
 
-        rows = list(self.list(config, filter=filter, before=before, limit=limit))
-        for row in rows:
-            yield row
+        statement = select(LangGraphCheckpointRecord)
+        if config:
+            values = _config_values(config)
+            statement = statement.where(
+                LangGraphCheckpointRecord.thread_id == values["thread_id"],
+                LangGraphCheckpointRecord.checkpoint_ns == values["checkpoint_ns"],
+            )
+        statement = statement.order_by(LangGraphCheckpointRecord.created_at.desc())
+        if limit is not None:
+            statement = statement.limit(limit)
+        async with self._session_manager.session() as session:
+            records = (await session.scalars(statement)).all()
+        for record in records:
+            yield self._to_tuple(record)
 
     def put_writes(
         self,
@@ -171,7 +131,9 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         task_id: str,
         task_path: str = "",
     ) -> None:
-        """Keep interrupt writes bounded; the checkpoint itself remains authoritative."""
+        """Reject sync use because the application uses an async database engine."""
+
+        raise NotImplementedError("Use aput_writes with CiteBot's async database")
 
     async def aput_writes(
         self,
@@ -180,29 +142,47 @@ class SQLiteCheckpointSaver(BaseCheckpointSaver):
         task_id: str,
         task_path: str = "",
     ) -> None:
-        """Async no-op for small review graphs without parallel task writes."""
+        """Keep interrupt writes bounded; the checkpoint remains authoritative."""
 
     def delete_thread(self, thread_id: str) -> None:
-        """Delete all checkpoints for one completed review thread."""
+        """Reject sync use because the application uses an async database engine."""
 
-        with self._connect() as connection:
-            connection.execute(
-                "DELETE FROM langgraph_checkpoints WHERE thread_id = ?", (thread_id,)
-            )
+        raise NotImplementedError("Use adelete_thread with CiteBot's async database")
 
     async def adelete_thread(self, thread_id: str) -> None:
-        """Async thread deletion."""
+        """Delete all checkpoints for one completed review thread."""
 
-        self.delete_thread(thread_id)
+        async with self._session_manager.session() as session:
+            await session.execute(
+                delete(LangGraphCheckpointRecord).where(
+                    LangGraphCheckpointRecord.thread_id == thread_id
+                )
+            )
 
-    def _connect(self) -> sqlite3.Connection:
-        """Open a short-lived WAL connection."""
-
-        connection = sqlite3.connect(self._path, timeout=5.0)
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout=5000")
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
+    def _to_tuple(self, record: LangGraphCheckpointRecord) -> CheckpointTuple:
+        checkpoint = self.serde.loads_typed(
+            (record.checkpoint_type, record.checkpoint_blob)
+        )
+        metadata = self.serde.loads_typed((record.metadata_type, record.metadata_blob))
+        config = _continuation_config(
+            {
+                "thread_id": record.thread_id,
+                "checkpoint_ns": record.checkpoint_ns,
+            },
+            record.checkpoint_id,
+        )
+        parent = (
+            _continuation_config(
+                {
+                    "thread_id": record.thread_id,
+                    "checkpoint_ns": record.checkpoint_ns,
+                },
+                record.parent_checkpoint_id,
+            )
+            if record.parent_checkpoint_id
+            else None
+        )
+        return CheckpointTuple(config, checkpoint, metadata, parent)
 
 
 def _config_values(config: RunnableConfig | None) -> dict[str, str | None]:
@@ -216,7 +196,9 @@ def _config_values(config: RunnableConfig | None) -> dict[str, str | None]:
     }
 
 
-def _continuation_config(values: dict[str, str | None], checkpoint_id: str) -> RunnableConfig:
+def _continuation_config(
+    values: dict[str, str | None], checkpoint_id: str
+) -> RunnableConfig:
     """Build the config required to resume the stored thread."""
 
     return {
@@ -226,30 +208,3 @@ def _continuation_config(values: dict[str, str | None], checkpoint_id: str) -> R
             "checkpoint_id": checkpoint_id,
         }
     }
-
-
-def _row_to_tuple(row: sqlite3.Row) -> CheckpointTuple:
-    """Decode one SQLite row into LangGraph's checkpoint contract."""
-
-    checkpoint = _decode(row["checkpoint_type"], row["checkpoint_blob"])
-    metadata = _decode(row["metadata_type"], row["metadata_blob"])
-    config = _continuation_config(
-        {"thread_id": row["thread_id"], "checkpoint_ns": row["checkpoint_ns"]},
-        row["checkpoint_id"],
-    )
-    parent = (
-        _continuation_config(
-            {"thread_id": row["thread_id"], "checkpoint_ns": row["checkpoint_ns"]},
-            row["parent_checkpoint_id"],
-        )
-        if row["parent_checkpoint_id"]
-        else None
-    )
-    return CheckpointTuple(config, checkpoint, metadata, parent)
-
-
-def _decode(type_name: str, payload: bytes) -> Any:
-    """Decode serializer output stored as SQLite-safe base64 bytes."""
-
-    raw = base64.b64decode(payload) if isinstance(payload, str) else payload
-    return BaseCheckpointSaver().serde.loads_typed((type_name, raw))

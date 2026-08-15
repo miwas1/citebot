@@ -18,6 +18,7 @@ async def test_sample_corpus_bootstrap_is_idempotent(tmp_path: Path) -> None:
     sample_path.mkdir()
     settings = Settings(
         RUNTIME_MODE="offline",
+        DATABASE_URL="postgresql+asyncpg://citebot:citebot@postgres:5432/citebot",
         SAMPLE_CORPUS_PATH=sample_path,
         SAMPLE_CORPUS_AUTO_INGEST=True,
         OBJECT_STORAGE_PATH=tmp_path / "storage" / "raw_documents",

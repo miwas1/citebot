@@ -426,7 +426,6 @@ name = "citebot"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "aiosqlite" },
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -442,6 +441,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "aiosqlite" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
@@ -462,7 +462,7 @@ structured = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosqlite", specifier = ">=0.22.1,<1.0.0" },
+    { name = "aiosqlite", marker = "extra == 'dev'", specifier = ">=0.22.1,<1.0.0" },
     { name = "asyncpg", specifier = ">=0.31.0,<1.0.0" },
     { name = "datasets", marker = "extra == 'evaluation'", specifier = ">=5.0.1,<6.0.0" },
     { name = "duckdb", marker = "extra == 'structured'", specifier = ">=1.5.0,<2.0.0" },

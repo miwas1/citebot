@@ -18,10 +18,8 @@ from app.ingestion.schemas import (
     DocumentVersionSummary,
     IngestionMetrics,
     JobStatusResponse,
-    SearchResult,
 )
-from app.ingestion.sparse_index import SparseIndex
-from app.ingestion.vector_writers import PgVectorWriter, QdrantWriter
+from app.ingestion.vector_writers import PgVectorWriter
 
 
 class IngestionService:
@@ -36,9 +34,7 @@ class IngestionService:
         chunker: SlidingWindowChunker,
         embedder: BaseEmbedder,
         object_store: LocalObjectStore,
-        sparse_index: SparseIndex,
         pgvector_writer: PgVectorWriter,
-        qdrant_writer: QdrantWriter,
     ) -> None:
         """Store dependencies required to run ingestion jobs end to end."""
 
@@ -49,16 +45,13 @@ class IngestionService:
         self._chunker = chunker
         self._embedder = embedder
         self._object_store = object_store
-        self._sparse_index = sparse_index
         self._pgvector_writer = pgvector_writer
-        self._qdrant_writer = qdrant_writer
 
     async def initialize(self) -> None:
         """Initialize storage backends that the ingestion service depends on."""
 
         await self._object_store.initialize()
         self._settings.structured_document_path.mkdir(parents=True, exist_ok=True)
-        await self._sparse_index.initialize()
         await self._pgvector_writer.initialize()
 
     async def ingest_path(
@@ -230,8 +223,6 @@ class IngestionService:
                 await self._repository.save_document(document, chunks, raw_text_path)
                 await self._repository.save_provenance(document, chunks)
                 await self._pgvector_writer.upsert_chunks(document, chunks, embeddings)
-                await self._qdrant_writer.upsert_chunks(document, chunks, embeddings)
-                await self._sparse_index.replace_document_chunks(document, chunks)
                 documents_indexed += 1
                 chunks_written += len(chunks)
         except Exception as error:
@@ -280,13 +271,7 @@ class IngestionService:
 
         return await self._repository.get_job(job_id)
 
-    async def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
-        """Run a local sparse search over ingested chunks for validation."""
-
-        return await self._sparse_index.search(query=query, top_k=top_k)
-
     async def metrics(self) -> IngestionMetrics:
         """Return aggregate ingestion counts for observability and dashboards."""
 
-        return await self._repository.metrics()
         return await self._repository.metrics()

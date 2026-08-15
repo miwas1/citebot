@@ -42,6 +42,7 @@ def test_offline_production_rejects_hosted_providers() -> None:
         Settings(
             APP_ENV="production",
             RUNTIME_MODE="offline",
+            DATABASE_URL="postgresql+asyncpg://citebot:citebot@postgres:5432/citebot",
             EMBEDDING_PROVIDER="openai",
             OPENAI_API_KEY="test-key",
             ANSWER_PROVIDER="llama-cpp",
@@ -59,7 +60,8 @@ def test_offline_production_rejects_public_local_service_url() -> None:
         Settings(
             APP_ENV="production",
             RUNTIME_MODE="offline",
-            QDRANT_URL="https://example.invalid/collections",
+            DATABASE_URL="postgresql+asyncpg://citebot:citebot@postgres:5432/citebot",
+            EMBEDDING_BASE_URL="https://example.invalid/v1",
             EMBEDDING_PROVIDER="local-http",
             ANSWER_PROVIDER="llama-cpp",
             EVALUATION_EVALUATOR_PROVIDER="local",
@@ -94,7 +96,7 @@ def test_pdf_loader_preserves_native_page_elements(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sqlite_worker_queue_claims_and_completes_job(tmp_path: Path) -> None:
+async def test_worker_queue_claims_and_completes_job(tmp_path: Path) -> None:
     """Queued ingestion survives submission until a worker claims it."""
 
     corpus = tmp_path / "corpus"
@@ -104,9 +106,6 @@ async def test_sqlite_worker_queue_claims_and_completes_job(tmp_path: Path) -> N
         DATABASE_URL=f"sqlite+aiosqlite:///{tmp_path / 'citebot.db'}",
         OBJECT_STORAGE_PATH=tmp_path / "raw",
         STRUCTURED_DOCUMENT_PATH=tmp_path / "structured",
-        SPARSE_INDEX_PATH=tmp_path / "sparse.json",
-        ENABLE_QDRANT=False,
-        ENABLE_PGVECTOR=False,
         EMBEDDING_PROVIDER="local",
         ANSWER_PROVIDER="local",
         INGESTION_EXECUTION_MODE="queued",

@@ -31,8 +31,7 @@ from app.ingestion.normalizer import DocumentNormalizer
 from app.ingestion.object_store import LocalObjectStore
 from app.ingestion.repository import IngestionRepository
 from app.ingestion.service import IngestionService
-from app.ingestion.sparse_index import SparseIndex
-from app.ingestion.vector_writers import PgVectorWriter, QdrantWriter
+from app.ingestion.vector_writers import PgVectorWriter
 from app.observability.metrics import InMemoryMetricsRegistry
 from app.projects.repository import ProjectRepository
 from app.projects.service import ProjectService
@@ -42,7 +41,7 @@ from app.retrieval.service import RetrievalService
 from app.tools.citation_verifier import CitationVerifier
 from app.tools.python_sandbox import PythonSandboxTool
 from app.tools.web_search import build_web_search_tool
-from app.workflows.checkpointer import SQLiteCheckpointSaver
+from app.workflows.checkpointer import DatabaseCheckpointSaver
 from app.workflows.repository import WorkflowRepository
 from app.workflows.review_gate import ReviewGate
 from app.workflows.service import WorkflowService
@@ -99,10 +98,7 @@ def build_container(
 ) -> ServiceContainer:
     """Construct the service graph for the current process."""
 
-    session_manager = DatabaseSessionManager(
-        settings.database_url,
-        sqlite_busy_timeout_ms=settings.sqlite_busy_timeout_ms,
-    )
+    session_manager = DatabaseSessionManager(settings.database_url)
     repository = IngestionRepository(session_manager)
     project_repository = ProjectRepository(session_manager)
     project_service = ProjectService(project_repository)
@@ -111,16 +107,9 @@ def build_container(
     chunker = SlidingWindowChunker(settings.chunk_size, settings.chunk_overlap)
     embedder = build_embedder(settings)
     object_store = LocalObjectStore(settings.object_storage_path)
-    sparse_index = SparseIndex(settings.sparse_index_path)
     pgvector_writer = PgVectorWriter(
         session_manager=session_manager,
-        enabled=settings.enable_pgvector,
         vector_size=settings.embedding_dimension,
-    )
-    qdrant_writer = QdrantWriter(
-        base_url=settings.qdrant_url,
-        collection_name=settings.qdrant_collection,
-        enabled=settings.enable_qdrant,
     )
     retrieval_repository = RetrievalRepository(session_manager)
     reranker = build_reranker(settings)
@@ -146,7 +135,6 @@ def build_container(
         session_manager=session_manager,
         repository=retrieval_repository,
         embedder=embedder,
-        sparse_index=sparse_index,
         reranker=reranker,
     )
     ingestion_service = IngestionService(
@@ -157,9 +145,7 @@ def build_container(
         chunker=chunker,
         embedder=embedder,
         object_store=object_store,
-        sparse_index=sparse_index,
         pgvector_writer=pgvector_writer,
-        qdrant_writer=qdrant_writer,
     )
     research_agent_service = ResearchAgentService(
         settings=settings,
@@ -177,12 +163,11 @@ def build_container(
         ingestion_service=ingestion_service,
         research_agent_service=research_agent_service,
     )
-    health_service = HealthService(settings, session_manager, qdrant_writer)
+    health_service = HealthService(settings, session_manager)
     workflow_repository = WorkflowRepository(session_manager)
     calculation_repository = CalculationRepository(session_manager)
     diff_repository = DiffRepository(session_manager)
-    checkpoint_path = settings.object_storage_path.parent / "langgraph-checkpoints.sqlite3"
-    review_gate = ReviewGate(SQLiteCheckpointSaver(checkpoint_path))
+    review_gate = ReviewGate(DatabaseCheckpointSaver(session_manager))
     return ServiceContainer(
         settings=settings,
         session_manager=session_manager,

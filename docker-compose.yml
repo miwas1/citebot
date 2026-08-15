@@ -1,13 +1,11 @@
 x-citebot-environment: &citebot-environment
   RUNTIME_MODE: offline
-  DATABASE_URL: sqlite+aiosqlite:////data/citebot.db
-  QDRANT_URL: http://qdrant:6333
+  DATABASE_URL: postgresql+asyncpg://citebot:${POSTGRES_PASSWORD:-citebot}@postgres:5432/citebot
   INGESTION_EXECUTION_MODE: queued
   INGESTION_MAX_DOCUMENTS: "600"
   ALLOW_LOCAL_DENSE_FALLBACK: "false"
   OBJECT_STORAGE_PATH: /data/raw_documents
   STRUCTURED_DOCUMENT_PATH: /data/structured_documents
-  SPARSE_INDEX_PATH: /data/sparse_index.sqlite3
   EMBEDDING_BASE_URL: http://embedding:8081
   EMBEDDING_MODEL: ${EMBEDDING_SERVED_MODEL_NAME:-BAAI/bge-small-en-v1.5}
   LLM_BASE_URL: http://llm:8082/v1
@@ -69,7 +67,7 @@ services:
     depends_on:
       model-preflight:
         condition: service_completed_successfully
-      qdrant:
+      postgres:
         condition: service_healthy
       embedding:
         condition: service_healthy
@@ -124,7 +122,7 @@ services:
     depends_on:
       model-preflight:
         condition: service_completed_successfully
-      qdrant:
+      postgres:
         condition: service_healthy
       embedding:
         condition: service_healthy
@@ -219,37 +217,11 @@ services:
     cpus: "4.0"
     restart: unless-stopped
 
-  qdrant:
-    image: qdrant/qdrant:v1.18.2
-    environment:
-      QDRANT__TELEMETRY_DISABLED: "true"
-    expose:
-      - "6333"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    networks:
-      - citebot_internal
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          bash -ec 'exec 3<>/dev/tcp/127.0.0.1/6333;
-          printf "GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3;
-          IFS= read -r status <&3;
-          [[ "$$status" == *" 200 "* ]]'
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    mem_limit: 2g
-    cpus: "1.5"
-    restart: unless-stopped
-
   postgres:
     image: pgvector/pgvector:0.8.2-pg18
-    profiles: ["postgres"]
     environment:
       POSTGRES_USER: citebot
-      POSTGRES_PASSWORD: citebot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-citebot}
       POSTGRES_DB: citebot
     expose:
       - "5432"
@@ -263,6 +235,9 @@ services:
       - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
     networks:
       - citebot_internal
+    mem_limit: 2g
+    cpus: "1.5"
+    restart: unless-stopped
 
   dozzle:
     image: amir20/dozzle:v10.6.2
@@ -278,7 +253,6 @@ volumes:
   caddy_data:
   caddy_config:
   postgres_data:
-  qdrant_data:
 
 networks:
   citebot_internal:

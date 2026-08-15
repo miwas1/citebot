@@ -24,34 +24,21 @@ class Settings(BaseSettings):
     runtime_mode: str = Field(default="development", alias="RUNTIME_MODE")
     api_bind_host: str = Field(default="127.0.0.1", alias="API_BIND_HOST")
     local_service_hosts: str = Field(
-        default="embedding,llm,qdrant,ocr-worker,localhost,127.0.0.1,::1",
+        default="embedding,llm,ocr-worker,localhost,127.0.0.1,::1",
         alias="LOCAL_SERVICE_HOSTS",
     )
     database_url: str = Field(
-        default="sqlite+aiosqlite:///./citebot.db", alias="DATABASE_URL"
+        default="postgresql+asyncpg://citebot:citebot@localhost:5432/citebot",
+        alias="DATABASE_URL",
     )
-    sqlite_busy_timeout_ms: int = Field(
-        default=5000, alias="SQLITE_BUSY_TIMEOUT_MS"
-    )
-    qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
-    qdrant_collection: str = Field(
-        default="citebot_chunks_bge_small_v1", alias="QDRANT_COLLECTION"
-    )
-    enable_qdrant: bool = Field(default=True, alias="ENABLE_QDRANT")
-    enable_pgvector: bool = Field(default=False, alias="ENABLE_PGVECTOR")
     object_storage_path: Path = Field(
         default=Path("./storage/raw_documents"),
         alias="OBJECT_STORAGE_PATH",
-    )
-    sparse_index_path: Path = Field(
-        default=Path("./storage/sparse_index.sqlite3"),
-        alias="SPARSE_INDEX_PATH",
     )
     structured_document_path: Path = Field(
         default=Path("./storage/structured_documents"),
         alias="STRUCTURED_DOCUMENT_PATH",
     )
-    vector_backend: str = Field(default="qdrant", alias="VECTOR_BACKEND")
     document_parser: str = Field(default="auto", alias="DOCUMENT_PARSER")
     ocr_provider: str = Field(default="paddleocr", alias="OCR_PROVIDER")
     ocr_model_path: Path = Field(
@@ -121,7 +108,7 @@ class Settings(BaseSettings):
     chunk_size: int = Field(default=800, alias="CHUNK_SIZE")
     chunk_overlap: int = Field(default=120, alias="CHUNK_OVERLAP")
     dense_primary_backend: str = Field(
-        default="auto",
+        default="pgvector",
         alias="DENSE_PRIMARY_BACKEND",
     )
     allow_local_dense_fallback: bool = Field(
@@ -314,9 +301,6 @@ class Settings(BaseSettings):
             if self.runtime_mode == "offline":
                 msg = "API_BIND_HOST must be loopback in RUNTIME_MODE=offline"
                 raise ValueError(msg)
-        if self.vector_backend not in {"qdrant", "local", "pgvector"}:
-            msg = "VECTOR_BACKEND must be one of qdrant, local, or pgvector"
-            raise ValueError(msg)
         if self.document_parser not in {"auto", "native", "ocr", "docling", "ppstructure"}:
             msg = "DOCUMENT_PARSER must be one of auto, native, ocr, docling, or ppstructure"
             raise ValueError(msg)
@@ -364,11 +348,13 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         if self.runtime_mode == "offline":
             for name, value in {
-                "QDRANT_URL": self.qdrant_url,
                 "EMBEDDING_BASE_URL": self.embedding_base_url,
                 "LLM_BASE_URL": self.llm_base_url,
             }.items():
                 self._validate_local_url(name, value)
+            if not self.database_url.startswith("postgresql+"):
+                msg = "RUNTIME_MODE=offline requires a PostgreSQL DATABASE_URL"
+                raise ValueError(msg)
 
         if (
             self.app_env == "production"
@@ -387,12 +373,6 @@ class Settings(BaseSettings):
         if self.chunk_overlap >= self.chunk_size:
             msg = "CHUNK_OVERLAP must be smaller than CHUNK_SIZE"
             raise ValueError(msg)
-        if self.sqlite_busy_timeout_ms <= 0:
-            msg = "SQLITE_BUSY_TIMEOUT_MS must be positive"
-            raise ValueError(msg)
-        if self.enable_pgvector and not self.database_url.startswith("postgresql+"):
-            msg = "ENABLE_PGVECTOR requires a PostgreSQL DATABASE_URL"
-            raise ValueError(msg)
         if self.embedding_dimension <= 0:
             msg = "EMBEDDING_DIMENSION must be positive"
             raise ValueError(msg)
@@ -405,10 +385,8 @@ class Settings(BaseSettings):
         }:
             msg = "EMBEDDING_PROVIDER must be one of local-http, local, test, openai, or gemini"
             raise ValueError(msg)
-        if self.dense_primary_backend not in {"auto", "pgvector", "qdrant", "local"}:
-            msg = (
-                "DENSE_PRIMARY_BACKEND must be one of auto, pgvector, qdrant, or local"
-            )
+        if self.dense_primary_backend not in {"auto", "pgvector", "local"}:
+            msg = "DENSE_PRIMARY_BACKEND must be one of auto, pgvector, or local"
             raise ValueError(msg)
         if self.hybrid_dense_weight < 0 or self.hybrid_sparse_weight < 0:
             msg = "HYBRID_DENSE_WEIGHT and HYBRID_SPARSE_WEIGHT must be non-negative"

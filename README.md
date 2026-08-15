@@ -108,10 +108,10 @@ Services started:
 - Dozzle through Caddy on `http://127.0.0.1/dozzle/` and port `8888`
 - local embedding service on the private Compose network
 - local llama.cpp server on the private Compose network
-- Qdrant on the private Compose network
-- SQLite, raw/structured documents, and indexes under `./storage`
+- PostgreSQL with pgvector on the private Compose network
+- raw and structured document artifacts under `./storage`
 
-Qdrant, model services, and worker ports are not published to the host. The
+PostgreSQL, model services, and worker ports are not published to the host. The
 API remains bound to host loopback on port 8000; Caddy is the public listener.
 
 The Compose defaults target a 16 GB CPU-only workstation: one document worker,
@@ -119,17 +119,20 @@ one active research generation with a two-request waiting queue, a 4,096-token
 LLM context, four-item embedding batches, 100-page PDFs, up to 600 documents per
 ingestion source, and bounded per-service
 memory/CPU limits. Keep at least 2 GB of host memory available and treat
-sustained swap as a failed capacity signal. The sparse index is SQLite FTS5 at
-`storage/sparse_index.sqlite3`; a legacy `sparse_index.json` is migrated without
-overwriting the original file.
+sustained swap as a failed capacity signal. PostgreSQL owns metadata, job
+leases, conversations, checkpoints, full-text search, and pgvector embeddings.
 
-### 4. Run without Docker (SQLite / local vector index)
+### 4. Run without Docker
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-For fast tests without model services, set `EMBEDDING_PROVIDER=local`, `ANSWER_PROVIDER=local`, `ENABLE_QDRANT=false`, and `INGESTION_EXECUTION_MODE=foreground`. These deterministic providers are not production inference.
+Set `DATABASE_URL` to a PostgreSQL instance with the pgvector extension. For
+fast tests without model services, set `EMBEDDING_PROVIDER=local`,
+`ANSWER_PROVIDER=local`, and `INGESTION_EXECUTION_MODE=foreground`. The test
+suite may use SQLite as an isolated SQLAlchemy dialect; shipped runtime profiles
+use PostgreSQL only.
 
 ---
 
@@ -194,7 +197,7 @@ stack in offline mode.
 
 For a personal server, office server, or private VM, the Compose stack includes
 Caddy as an HTTP reverse proxy. CiteBot is available on port 80 and Dozzle is
-available on port 8888. Do not expose Qdrant, the embedding service, or the LLM
+available on port 8888. Do not expose PostgreSQL, the embedding service, or the LLM
 service to the network.
 
 The default public URLs are:
@@ -392,7 +395,7 @@ python -m app.ingestion.cli search "citation traceability" \
 Search flags:
 
 - `--strategy sparse|dense|hybrid`
-- `--index-target auto|pgvector|qdrant|local`
+- `--index-target auto|pgvector|local`
 - `--document-id`, `--source-uri`, and `--access-policy` filters
 - `--embedding-version` and `--index-version` filters
 - `--disable-reranking` to inspect fused rankings without the reranker
@@ -543,7 +546,7 @@ make benchmark-16gb             # 30-minute mixed-load 16 GB soak artifact
 
 ## Real Backend Benchmarking
 
-Use the retrieval harness to benchmark the default local Qdrant path through the API. The pgvector comparison remains an optional compatibility profile.
+Use the retrieval harness to validate and benchmark the pgvector path through the API.
 
 ```bash
 make integration-retrieval
@@ -554,8 +557,8 @@ The harness will:
 
 - ensure the Docker Compose stack is up,
 - wait for `/api/v1/ready`,
-- ingest the sample corpus into Qdrant and the sparse index,
-- run dense retrieval requests against the local Qdrant path,
+- ingest the sample corpus into PostgreSQL full-text and pgvector indexes,
+- run dense retrieval requests against pgvector,
 - write JSON reports under `artifacts/retrieval-benchmarks/`.
 
 You can also run it directly:

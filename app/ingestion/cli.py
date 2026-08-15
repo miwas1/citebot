@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search_parser.add_argument(
         "--index-target",
-        choices=["auto", "pgvector", "qdrant", "local"],
+        choices=["auto", "pgvector", "local"],
         default="auto",
     )
     search_parser.add_argument("--document-id", action="append", default=[])

@@ -3,7 +3,7 @@
 This runbook deploys CiteBot for one person or a small trusted organization on
 a private Linux server. It keeps inference and document processing on that
 server, exposes only the web application through HTTPS, and retains the API,
-Qdrant, embedding model, and language model on private interfaces.
+PostgreSQL, embedding model, and language model on private interfaces.
 
 ## 1. Choose the host
 
@@ -49,6 +49,7 @@ API_BIND_HOST=127.0.0.1
 CITEBOT_PORT=8000
 RESEARCH_API_KEY=<first-generated-secret>
 ADMIN_API_KEY=<second-generated-secret>
+POSTGRES_PASSWORD=<third-generated-secret>
 MODEL_ARTIFACT_ROOT=./models
 ```
 
@@ -91,7 +92,7 @@ bundled sample data.
 
 The API is reachable internally at `http://127.0.0.1:8000`. Caddy publishes
 CiteBot on port 80 and Dozzle at `/dozzle/` on the same listener, with port 8888
-as an optional dedicated listener. Qdrant, embedding, and LLM ports remain
+as an optional dedicated listener. PostgreSQL, embedding, and LLM ports remain
 exposed only on the internal Compose network.
 
 ## 4. Optional: put HTTPS in front
@@ -159,7 +160,7 @@ server {
 ```
 
 Do not change the Compose API binding to `0.0.0.0`. Caddy should remain the
-public listener. Restrict 8000, 6333, 8081, and 8082 at the host and cloud
+public listener. Restrict 8000, 5432, 8081, and 8082 at the host and cloud
 firewalls. Restrict Dozzle's 8888 listener as well unless it is intentionally
 public. Prefer VPN or identity-aware proxy access for business use.
 
@@ -186,17 +187,32 @@ A `401` response normally means the corresponding browser key is missing or
 incorrect. A document that remains queued usually means `document-worker` is
 not healthy. Check `docker compose ps` and the worker logs before retrying.
 
-## 6. Back up and restore
+## 6. Upgrade from the former SQLite/Qdrant stack
 
-`storage/` contains source uploads, extracted documents, SQLite metadata and
-conversation state, ingestion jobs, and the sparse index. Back it up as
-sensitive data. Qdrant vectors are derived from those documents and can be
-rebuilt, but keeping a Docker volume snapshot shortens recovery.
+This release does not silently copy data from the former SQLite and Qdrant
+stores. Before the first PostgreSQL startup, stop the old API and worker and
+make a cold copy of `storage/` plus the old Qdrant Docker volume. Keep that copy
+until document counts, conversations, and representative searches have been
+validated.
+
+For installations where retaining conversation/job history is mandatory, do
+not cut over yet: a reviewed installation-specific relational import is
+required. If a clean metadata cutover is acceptable, retain the original source
+files and re-submit them after PostgreSQL is ready; this regenerates full-text
+and vector indexes from the configured embedding model. Never run old and new
+stacks as concurrent writers because there is no dual-write synchronization.
+
+## 7. Back up and restore
+
+`storage/` contains source uploads and extracted documents. PostgreSQL contains
+metadata, conversation state, ingestion jobs, full-text indexes, and pgvector
+embeddings. Back up both as sensitive data.
 
 For a simple consistent cold backup:
 
 ```bash
 docker compose stop
+docker compose run --rm postgres pg_dump -U citebot -Fc citebot > /secure-backups/citebot-db-YYYY-MM-DD.dump
 tar --xattrs --acls -czf /secure-backups/citebot-storage-YYYY-MM-DD.tar.gz storage
 cp models/manifest.lock.json /secure-backups/manifest.lock-YYYY-MM-DD.json
 docker compose up -d
@@ -207,12 +223,12 @@ store at least one copy on a different system, restrict access, and test a
 restore periodically. Model binaries can be re-provisioned from the locked
 manifest; back them up too when upstream availability is an operational risk.
 
-To restore, stop Compose, move the damaged `storage/` aside, extract the chosen
-archive into the repository root, verify ownership and permissions, restore the
-matching model manifest/artifacts, and start Compose. Confirm `/ready`, upload
-history, a known conversation, and a cited query before returning service.
+To restore, stop Compose, restore the storage archive and model artifacts, start
+PostgreSQL, then pipe the dump to `pg_restore --clean --if-exists -U citebot -d
+citebot` inside the PostgreSQL container. Start the remaining services and
+confirm `/ready`, upload history, a known conversation, and a cited query.
 
-## 7. Upgrade safely
+## 8. Upgrade safely
 
 Before an upgrade:
 
