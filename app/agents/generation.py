@@ -23,6 +23,10 @@ from app.observability.metrics import InMemoryMetricsRegistry, LlmCallMetrics
 logger = logging.getLogger(__name__)
 
 
+class AnswerGenerationUnavailable(RuntimeError):
+    """Raised when a configured answer-generation service cannot respond."""
+
+
 class BaseAnswerGenerator(ABC):
     """Interface for generating grounded answers from retrieved contexts."""
 
@@ -47,7 +51,7 @@ class LlamaCppAnswerGenerator(BaseAnswerGenerator):
         self,
         base_url: str,
         model: str,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = 300.0,
         concurrency: int = 1,
         transport: httpx.AsyncBaseTransport | None = None,
         metrics_registry: InMemoryMetricsRegistry | None = None,
@@ -101,7 +105,13 @@ class LlamaCppAnswerGenerator(BaseAnswerGenerator):
                 queue_wait_ms=queue_wait_ms,
                 http_ms=http_ms,
             )
-            raise RuntimeError(f"Local answer service unavailable: {error}") from error
+            if isinstance(error, httpx.TimeoutException):
+                detail = f"timed out after {self._timeout_seconds:g}s"
+            else:
+                detail = str(error).strip() or error.__class__.__name__
+            raise AnswerGenerationUnavailable(
+                f"Local answer service request to {endpoint} failed: {detail}"
+            ) from error
         response_payload = response.json()
         self._record_call(
             request=request,

@@ -148,7 +148,7 @@ class Settings(BaseSettings):
         default="phi-4-mini-instruct-q4", alias="ANSWER_MODEL"
     )
     llm_base_url: str = Field(default="http://llm:8082/v1", alias="LLM_BASE_URL")
-    llm_timeout_seconds: float = Field(default=60.0, alias="LLM_TIMEOUT_SECONDS")
+    llm_timeout_seconds: float = Field(default=300.0, alias="LLM_TIMEOUT_SECONDS")
     llm_context_tokens: int = Field(default=4096, alias="LLM_CONTEXT_TOKENS")
     llm_generation_concurrency: int = Field(
         default=1, alias="LLM_GENERATION_CONCURRENCY"

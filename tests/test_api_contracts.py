@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agents.generation import AnswerGenerationUnavailable
 from app.core.config import get_settings
 from app.main import create_app
 
@@ -171,6 +172,42 @@ def test_streaming_research_query_emits_start_and_complete_events(
     assert payload[0]["event"] == "start"
     assert payload[1]["event"] == "complete"
     assert payload[1]["data"]["answer"]["citations"]
+
+
+def test_answer_service_failure_is_returned_without_stream_crash(
+    configured_environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Model outages should become stable HTTP and NDJSON error contracts."""
+
+    async def unavailable(*args: object, **kwargs: object) -> object:
+        raise AnswerGenerationUnavailable("local model timed out")
+
+    with TestClient(create_app()) as client:
+        monkeypatch.setattr(
+            client.app.state.container.research_agent_service,
+            "answer",
+            unavailable,
+        )
+        response = client.post(
+            "/api/v1/research/query",
+            json={"query": "Will this fail cleanly?"},
+        )
+        with client.stream(
+            "POST",
+            "/api/v1/research/query/stream",
+            json={"query": "Will this stream fail cleanly?"},
+        ) as stream_response:
+            payload = _parse_stream_lines(stream_response)
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "local model timed out"}
+    assert stream_response.status_code == 200
+    assert payload[0]["event"] == "start"
+    assert payload[1] == {
+        "event": "error",
+        "data": {"detail": "local model timed out"},
+    }
 
 
 def test_metrics_endpoint_requires_admin_key_and_reports_requests(

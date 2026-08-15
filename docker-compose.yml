@@ -9,6 +9,7 @@ x-citebot-environment: &citebot-environment
   EMBEDDING_BASE_URL: http://embedding:8081
   EMBEDDING_MODEL: ${EMBEDDING_SERVED_MODEL_NAME:-BAAI/bge-small-en-v1.5}
   LLM_BASE_URL: http://llm:8082/v1
+  LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-300}
   MODEL_MANIFEST_PATH: /models/manifest.lock.json
   OCR_MODEL_PATH: /models/paddleocr
   SAMPLE_CORPUS_PATH: /app/data/sample_corpus

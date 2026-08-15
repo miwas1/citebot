@@ -8,7 +8,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.agents.generation import LlamaCppAnswerGenerator
+from app.agents.generation import (
+    AnswerGenerationUnavailable,
+    LlamaCppAnswerGenerator,
+)
 from app.agents.schemas import ResearchGenerationRequest, ResearchMemory
 from app.core.config import Settings
 from app.core.lifecycle import build_container
@@ -193,6 +196,36 @@ async def test_local_http_model_adapters_use_private_contracts() -> None:
     assert llm_metrics["avg_prompt_tokens"] == 40.0
     assert llm_metrics["avg_completion_tokens_per_second"] == 200.0
     assert llm_metrics["latest"]["trace_id"] == "trace"
+
+
+@pytest.mark.asyncio
+async def test_local_answer_timeout_has_actionable_error() -> None:
+    """A blank httpx timeout should identify the endpoint and configured limit."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("", request=request)
+
+    generator = LlamaCppAnswerGenerator(
+        base_url="http://llm:8082/v1",
+        model="test-model",
+        timeout_seconds=300,
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(
+        AnswerGenerationUnavailable,
+        match=(
+            r"http://llm:8082/v1/chat/completions failed: "
+            r"timed out after 300s"
+        ),
+    ):
+        await generator.generate(
+            ResearchGenerationRequest(
+                query="What?",
+                trace_id="trace",
+                memory=ResearchMemory(),
+            )
+        )
 
 
 def test_model_provisioner_writes_verifiable_local_manifest(tmp_path: Path) -> None:

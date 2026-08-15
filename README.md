@@ -75,6 +75,7 @@ The example file is configured for an offline local run. Copy it before starting
 | `ANSWER_PROVIDER` | `llama-cpp` or `local`/`test` (deterministic tests) | `llama-cpp` |
 | `ANSWER_MODEL` | Local quantized model artifact | `phi-4-mini-instruct-q4` |
 | `LLM_BASE_URL` | Private llama.cpp-compatible URL | `http://llm:8082/v1` |
+| `LLM_TIMEOUT_SECONDS` | Maximum wait for CPU-local answer generation | `300` |
 | `OCR_PROVIDER` | `paddleocr` or `none` | `paddleocr` |
 | `OCR_FALLBACK_PROVIDER` | `tesseract` or `none` | `tesseract` |
 | `EVALUATION_EVALUATOR_PROVIDER` | `local` by default | `local` |

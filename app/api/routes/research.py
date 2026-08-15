@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from app.agents.generation import AnswerGenerationUnavailable
 from app.agents.schemas import (
     ResearchQueryRequest,
     ResearchResponse,
@@ -44,6 +45,8 @@ async def run_research_query(
             )
     except AdmissionRejected as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    except AnswerGenerationUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @project_router.post("/{project_id}/research/query", response_model=ResearchResponse)
@@ -69,6 +72,8 @@ async def run_project_research_query(
                 scoped_request, trace_id=trace_id
             )
     except AdmissionRejected as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except AnswerGenerationUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
 
 
@@ -109,6 +114,8 @@ async def stream_research_query(
                 )
         except AdmissionRejected as error:
             yield _stream_event("error", {"detail": str(error)})
+        except AnswerGenerationUnavailable as error:
+            yield _stream_event("error", {"detail": str(error)})
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
@@ -144,6 +151,8 @@ async def stream_project_research_query(
                 )
                 yield _stream_event("complete", response.model_dump(mode="json"))
         except AdmissionRejected as error:
+            yield _stream_event("error", {"detail": str(error)})
+        except AnswerGenerationUnavailable as error:
             yield _stream_event("error", {"detail": str(error)})
 
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
