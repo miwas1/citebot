@@ -204,6 +204,8 @@ services:
 
   qdrant:
     image: qdrant/qdrant:v1.18.2
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
     expose:
       - "6333"
     volumes:
@@ -211,7 +213,13 @@ services:
     networks:
       - citebot_internal
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:6333/readyz"]
+      test:
+        - CMD-SHELL
+        - >-
+          bash -ec 'exec 3<>/dev/tcp/127.0.0.1/6333;
+          printf "GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3;
+          IFS= read -r status <&3;
+          [[ "$$status" == *" 200 "* ]]'
       interval: 10s
       timeout: 5s
       retries: 12
