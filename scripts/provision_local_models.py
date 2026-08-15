@@ -19,11 +19,15 @@ import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from time import sleep
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 DEFAULT_HF_ENDPOINT = "https://huggingface.co"
+DEFAULT_HF_MAX_RETRIES = 5
+DEFAULT_HF_RETRY_BACKOFF_SECONDS = 2.0
 ENVIRONMENT_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -49,9 +53,17 @@ class ResolvedArtifact:
 class HuggingFaceClient:
     """Small standard-library client so provisioning has no package dependency."""
 
-    def __init__(self, endpoint: str, token: str | None) -> None:
+    def __init__(
+        self,
+        endpoint: str,
+        token: str | None,
+        max_retries: int = DEFAULT_HF_MAX_RETRIES,
+        retry_backoff_seconds: float = DEFAULT_HF_RETRY_BACKOFF_SECONDS,
+    ) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._token = token
+        self._max_retries = max(0, max_retries)
+        self._retry_backoff_seconds = max(0.0, retry_backoff_seconds)
 
     def model_info(self, repository: str, revision: str) -> dict[str, Any]:
         encoded_repository = quote(repository, safe="/")
@@ -86,7 +98,22 @@ class HuggingFaceClient:
         headers = {"User-Agent": "citebot-model-provisioner/1"}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-        return urlopen(Request(url, headers=headers), timeout=60)  # noqa: S310
+        request = Request(url, headers=headers)
+        last_error: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                return urlopen(request, timeout=60)  # noqa: S310
+            except HTTPError as error:
+                if error.code not in {408, 429, 500, 502, 503, 504}:
+                    raise
+                last_error = error
+            except URLError as error:
+                last_error = error
+            if attempt < self._max_retries:
+                sleep(self._retry_backoff_seconds * (2**attempt))
+        raise RuntimeError(
+            f"request failed after {self._max_retries + 1} attempts: {url}"
+        ) from last_error
 
 
 def build_specs(environ: dict[str, str]) -> list[ArtifactSpec]:
@@ -279,10 +306,16 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Directory mounted at /models by Compose (default: MODEL_ARTIFACT_ROOT or models)",
     )
-    parser.add_argument(
+    replacement = parser.add_mutually_exclusive_group()
+    replacement.add_argument(
         "--force",
         action="store_true",
         help="Replace only the known artifact targets and regenerate the manifest",
+    )
+    replacement.add_argument(
+        "--ensure",
+        action="store_true",
+        help="Reuse a valid manifest or repair incomplete known artifact targets",
     )
     return parser.parse_args()
 
@@ -308,11 +341,25 @@ def main() -> int:
     environment = load_provisioning_environment(dict(os.environ))
     root = (args.model_root or Path(environment.get("MODEL_ARTIFACT_ROOT", "models"))).expanduser()
     specs = build_specs(environment)
+    if args.ensure:
+        from verify_model_manifest import validate_manifest
+
+        manifest_path = root / "manifest.lock.json"
+        if manifest_path.exists() and not validate_manifest(manifest_path):
+            print(f"Offline model artifacts already verified: {manifest_path}")
+            return 0
+        remove_known_artifacts(root, specs)
     if args.force:
         remove_known_artifacts(root, specs)
+    max_retries = int(environment.get("HF_MAX_RETRIES", DEFAULT_HF_MAX_RETRIES))
+    retry_backoff_seconds = float(
+        environment.get("HF_RETRY_BACKOFF_SECONDS", DEFAULT_HF_RETRY_BACKOFF_SECONDS)
+    )
     client = HuggingFaceClient(
         endpoint=environment.get("HF_ENDPOINT", DEFAULT_HF_ENDPOINT),
         token=environment.get("HF_TOKEN"),
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
     )
     artifacts = provision(specs, root, client, environment)
     manifest = write_manifest(root, artifacts)

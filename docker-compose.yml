@@ -16,6 +16,31 @@ x-citebot-environment: &citebot-environment
   SAMPLE_CORPUS_AUTO_INGEST: "true"
 
 services:
+  model-provision:
+    build:
+      context: .
+    command: ["python", "scripts/provision_local_models.py", "--ensure"]
+    environment:
+      MODEL_ARTIFACT_ROOT: /models
+      HF_ENDPOINT: ${HF_ENDPOINT:-https://huggingface.co}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_MAX_RETRIES: ${HF_MAX_RETRIES:-5}
+      HF_RETRY_BACKOFF_SECONDS: ${HF_RETRY_BACKOFF_SECONDS:-2}
+      EMBEDDING_MODEL_REPOSITORY: ${EMBEDDING_MODEL_REPOSITORY:-BAAI/bge-small-en-v1.5}
+      EMBEDDING_MODEL_REVISION: ${EMBEDDING_MODEL_REVISION:-main}
+      LLM_MODEL_REPOSITORY: ${LLM_MODEL_REPOSITORY:-bartowski/microsoft_Phi-4-mini-instruct-GGUF}
+      LLM_MODEL_REVISION: ${LLM_MODEL_REVISION:-main}
+      LLM_MODEL_FILENAME: ${LLM_MODEL_FILENAME:-microsoft_Phi-4-mini-instruct-Q4_K_M.gguf}
+      OCR_DETECTION_MODEL_REPOSITORY: ${OCR_DETECTION_MODEL_REPOSITORY:-PaddlePaddle/PP-OCRv6_tiny_det}
+      OCR_DETECTION_MODEL_REVISION: ${OCR_DETECTION_MODEL_REVISION:-main}
+      OCR_RECOGNITION_MODEL_REPOSITORY: ${OCR_RECOGNITION_MODEL_REPOSITORY:-PaddlePaddle/PP-OCRv6_tiny_rec}
+      OCR_RECOGNITION_MODEL_REVISION: ${OCR_RECOGNITION_MODEL_REVISION:-main}
+    volumes:
+      - ${MODEL_ARTIFACT_ROOT:-./models}:/models
+    networks:
+      - model_download
+    restart: "no"
+
   model-preflight:
     build:
       context: .
@@ -24,6 +49,9 @@ services:
       MODEL_MANIFEST_PATH: /models/manifest.lock.json
     volumes:
       - ${MODEL_ARTIFACT_ROOT:-./models}:/models:ro
+    depends_on:
+      model-provision:
+        condition: service_completed_successfully
     restart: "no"
 
   api:
@@ -60,8 +88,6 @@ services:
   caddy:
     image: caddy:2.10.2-alpine
     depends_on:
-      api:
-        condition: service_started
       dozzle:
         condition: service_started
     ports:
@@ -229,3 +255,4 @@ volumes:
 networks:
   citebot_internal:
     internal: true
+  model_download:

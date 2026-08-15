@@ -23,13 +23,32 @@ def main() -> int:
         os.environ.get("MODEL_MANIFEST_PATH", "models/manifest.lock.json")
     )
     if not manifest_path.exists():
-        print(f"manifest not found: {manifest_path}", file=sys.stderr)
+        print(
+            f"manifest not found: {manifest_path}; automatic provisioning must complete first",
+            file=sys.stderr,
+        )
         return 2
+    failures = validate_manifest(manifest_path)
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        return 1
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    print(f"verified {len(payload['artifacts'])} offline model artifacts")
+    return 0
+
+
+def validate_manifest(manifest_path: Path) -> list[str]:
+    """Return validation failures without writing to stdout or stderr."""
+
+    if not manifest_path.exists():
+        return [f"manifest not found: {manifest_path}"]
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return [f"could not read manifest {manifest_path}: {error}"]
     artifacts = payload.get("artifacts", [])
     if not isinstance(artifacts, list) or not artifacts:
-        print("manifest must contain a non-empty artifacts list", file=sys.stderr)
-        return 2
+        return ["manifest must contain a non-empty artifacts list"]
     failures: list[str] = []
     declared_paths: set[Path] = set()
     for artifact in artifacts:
@@ -52,11 +71,7 @@ def main() -> int:
     for required_path in REQUIRED_RUNTIME_PATHS:
         if required_path not in declared_paths:
             failures.append(f"runtime artifact is not declared: {required_path}")
-    if failures:
-        print("\n".join(failures), file=sys.stderr)
-        return 1
-    print(f"verified {len(artifacts)} offline model artifacts")
-    return 0
+    return failures
 
 
 def _digest_path(path: Path) -> tuple[int, str]:

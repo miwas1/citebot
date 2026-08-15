@@ -13,11 +13,11 @@ EVAL_OUTPUT        ?= artifacts/evaluations/interpretability_scenario_result.jso
         ingest-interpretability eval-interpretability eval-interpretability-ragas \
         corpus-stats
 
-dev-up: models-verify
+dev-up:
 	docker compose up --build -d
 
-## local-setup: one-time model download, image build/pull, and offline stack startup
-local-setup: models-provision models-verify
+## local-setup: automatic model provisioning, image build/pull, and offline stack startup
+local-setup:
 	docker compose up --build -d
 
 dev-logs:
