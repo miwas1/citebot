@@ -281,6 +281,7 @@ def _build_citations(contexts: list[ResearchContext]) -> list[Citation]:
                 location_marker=context.location_marker,
                 page=context.metadata.get("page"),
                 element_ids=list(context.metadata.get("element_ids") or []),
+                source_anchor_ids=list(context.metadata.get("source_anchor_ids") or []),
                 bbox_refs=list(context.metadata.get("bbox_refs") or []),
                 source_type=context.source_type,
                 support_span=support,

@@ -1,0 +1,10 @@
+workflow_id: contract_review
+version: v1
+review_policy: always_review
+required_fields:
+  - parties
+  - term
+  - termination
+  - payment
+  - liability
+prohibited_use: legal advice

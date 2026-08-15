@@ -1,0 +1,9 @@
+workflow_id: compliance_mapping
+version: v1
+review_policy: always_review
+required_fields:
+  - requirement
+  - evidence
+  - gap
+  - owner
+prohibited_use: certifying legal compliance

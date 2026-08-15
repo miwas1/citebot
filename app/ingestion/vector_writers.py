@@ -173,6 +173,7 @@ class QdrantWriter:
         if not self._enabled or not chunks:
             return
         await self.ensure_collection(len(embeddings[0]))
+        await self._mark_document_stale(document.document_id)
         points = []
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             points.append(
@@ -194,6 +195,14 @@ class QdrantWriter:
                         "bbox_refs": [list(box) for box in chunk.bbox_refs],
                         "extraction_method": chunk.extraction_method,
                         "min_confidence": chunk.min_confidence,
+                        "parent_chunk_id": chunk.parent_chunk_id,
+                        "chunk_level": chunk.chunk_level,
+                        "heading_path": chunk.heading_path,
+                        "content_hash": chunk.content_hash,
+                        "version_id": chunk.version_id,
+                        "is_current": chunk.is_current,
+                        "ordinal": chunk.ordinal,
+                        "source_anchor_ids": chunk.source_anchor_ids,
                     },
                 }
             )
@@ -203,3 +212,34 @@ class QdrantWriter:
                 json={"points": points},
             )
             response.raise_for_status()
+
+    async def _mark_document_stale(self, document_id: str) -> None:
+        """Keep prior Qdrant versions available while making current filtering accurate."""
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(
+                f"{self._base_url}/collections/{self._collection_name}/points/scroll",
+                json={
+                    "filter": {
+                        "must": [
+                            {"key": "document_id", "match": {"value": document_id}},
+                            {"key": "is_current", "match": {"value": True}},
+                        ]
+                    },
+                    "limit": 1000,
+                    "with_payload": False,
+                    "with_vector": False,
+                },
+            )
+            response.raise_for_status()
+            point_ids = [
+                point["id"]
+                for point in response.json().get("result", {}).get("points", [])
+            ]
+            if not point_ids:
+                return
+            update = await client.put(
+                f"{self._base_url}/collections/{self._collection_name}/points/payload?wait=true",
+                json={"payload": {"is_current": False}, "points": point_ids},
+            )
+            update.raise_for_status()

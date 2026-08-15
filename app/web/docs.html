@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f2ed">
+  <title>CiteBot — Guide</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/docs.css">
+</head>
+<body class="docs-page">
+  <header class="docs-topbar">
+    <a class="brand" href="/" aria-label="Back to CiteBot workspace"><span class="brand-mark">C</span><span>CiteBot</span></a>
+    <div class="docs-topbar-copy">Local workspace guide</div>
+    <a class="docs-back" href="/">Back to workspace <span>↗</span></a>
+  </header>
+
+  <main class="docs-shell">
+    <aside class="docs-sidebar" aria-label="Guide sections">
+      <div class="docs-kicker">Operator guide</div>
+      <h1>Work with<br><em>evidence.</em></h1>
+      <p class="docs-intro">A compact reference for getting CiteBot running, asking better questions, and reviewing what it finds.</p>
+      <label class="docs-search-label" for="docsSearch">Find in guide</label>
+      <input id="docsSearch" class="docs-search" type="search" placeholder="Search topics" autocomplete="off">
+      <nav id="docsNav" class="docs-nav">
+        <a href="#first-run">First run</a>
+        <a href="#ask">Ask the library</a>
+        <a href="#documents">Documents &amp; versions</a>
+        <a href="#workflows">Workflows &amp; review</a>
+        <a href="#operate">Operate locally</a>
+      </nav>
+    </aside>
+
+    <article id="docsContent" class="docs-content">
+      <section class="docs-hero">
+        <div class="docs-kicker">CiteBot / 0.1</div>
+        <h2>Your local reference<br><em>desk.</em></h2>
+        <p>Keep source material on your machine, ask across the library, and inspect the exact evidence behind each answer.</p>
+      </section>
+
+      <section id="first-run" class="docs-section" data-doc-section>
+        <div class="docs-section-index">01</div>
+        <div>
+          <h3>First run</h3>
+          <p>On the first offline startup, CiteBot automatically queues the bundled sample corpus. It appears in Documents while the worker processes it, then becomes available for search.</p>
+          <div class="docs-command"><span>$</span><code>make local-setup</code></div>
+          <p class="docs-note">Startup is idempotent: an existing queued, running, or completed bootstrap job is not duplicated.</p>
+          <ol class="docs-steps">
+            <li>Provision the local models and start the stack.</li>
+            <li>Open the workspace at <code>http://127.0.0.1/</code>.</li>
+            <li>Wait for the sample documents to show <strong>Ready</strong>.</li>
+            <li>Ask a question about the sample research papers.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="ask" class="docs-section" data-doc-section>
+        <div class="docs-section-index">02</div>
+        <div>
+          <h3>Ask the library</h3>
+          <p>Use the Ask workspace for grounded questions. CiteBot retrieves a bounded context, generates a local answer, extracts atomic claims, and checks the citations before returning the response.</p>
+          <div class="docs-rule-list">
+            <div><strong>Be specific</strong><span>Name the document, timeframe, or comparison you care about.</span></div>
+            <div><strong>Inspect citations</strong><span>Select a numbered source marker to open its supporting passage.</span></div>
+            <div><strong>Trust the status</strong><span>Qualified or insufficient answers need more evidence; contradictions are surfaced rather than hidden.</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="documents" class="docs-section" data-doc-section>
+        <div class="docs-section-index">03</div>
+        <div>
+          <h3>Documents &amp; versions</h3>
+          <p>Open Documents to upload PDF, Word, text, Markdown, JSON, JSONL, or image sources. In queued mode, the document worker processes uploads without blocking the API.</p>
+          <p>Each re-upload can become an immutable version with source anchors, structured extraction metadata, and current-version filtering. The backend also supports exact diffs between versions for change reports.</p>
+          <div class="docs-endpoints"><code>GET /api/v1/documents</code><code>GET /api/v1/documents/{id}/versions</code></div>
+        </div>
+      </section>
+
+      <section id="workflows" class="docs-section" data-doc-section>
+        <div class="docs-section-index">04</div>
+        <div>
+          <h3>Workflows &amp; review</h3>
+          <p>Workflow packs turn research into structured work products for contract review, compliance mapping, vendor comparison, due diligence, and investigation timelines.</p>
+          <p>High-stakes products pause at a durable review checkpoint. Reviewers can inspect findings, edit permitted values, approve, reject, request reanalysis, or export an evidence bundle.</p>
+          <div class="docs-endpoints"><code>GET /api/v1/workflows</code><code>GET /api/v1/workflows/reviews</code><code>GET /api/v1/workflows/{id}/export</code></div>
+        </div>
+      </section>
+
+      <section id="operate" class="docs-section" data-doc-section>
+        <div class="docs-section-index">05</div>
+        <div>
+          <h3>Operate locally</h3>
+          <p>Offline mode keeps documents, embeddings, generation, vectors, sessions, and evaluation on the local stack. Hosted models and web search are disabled by policy.</p>
+          <div class="docs-rule-list">
+            <div><strong>Storage</strong><span>Back up <code>storage/</code> and the model manifest. Qdrant vectors can be rebuilt.</span></div>
+            <div><strong>Keys</strong><span>Set separate research and admin keys for a private server; enter them from the workspace gear menu.</span></div>
+            <div><strong>Capacity</strong><span>Keep at least 2 GB free on the 16 GB target host and avoid concurrent OCR and deep review.</span></div>
+          </div>
+          <p class="docs-note">The full deployment and backup runbook is available in the repository at <code>docs/private-server-deployment.md</code>.</p>
+        </div>
+      </section>
+
+      <footer class="docs-footer">CiteBot · private by default · evidence before confidence</footer>
+    </article>
+  </main>
+  <script src="/docs.js" defer></script>
+</body>
+</html>

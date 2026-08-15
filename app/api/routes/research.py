@@ -83,6 +83,20 @@ async def stream_research_query(
     return StreamingResponse(event_stream(), media_type="application/x-ndjson")
 
 
+@router.get("/runs/{analysis_run_id}/evidence")
+async def get_evidence_ledger(
+    analysis_run_id: str,
+    container: ContainerDependency,
+    _: ResearchAccessDependency,
+) -> dict[str, object]:
+    """Return the durable claim-to-anchor evidence ledger for one run."""
+
+    ledger = await container.evidence_repository.get_run_evidence(analysis_run_id)
+    if ledger is None:
+        raise HTTPException(status_code=404, detail="Analysis run not found")
+    return ledger
+
+
 def _stream_event(event_name: str, payload: dict[str, object]) -> str:
     """Encode one streaming event as a newline-delimited JSON line."""
 

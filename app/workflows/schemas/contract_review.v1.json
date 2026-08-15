@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "citebot://workflow/contract_review/v1",
+  "title": "CiteBot contract review",
+  "type": "object",
+  "required": ["work_product_id", "analysis_run_id", "workflow_id", "schema_version", "title", "status", "findings"],
+  "properties": {
+    "work_product_id": {"type": "string", "minLength": 1},
+    "analysis_run_id": {"type": "string", "minLength": 1},
+    "workflow_id": {"const": "contract_review"},
+    "workflow_version": {"type": "string"},
+    "schema_version": {"const": "v1"},
+    "title": {"type": "string"},
+    "status": {"enum": ["draft", "needs_review", "approved", "rejected", "superseded"]},
+    "findings": {"$ref": "#/$defs/findings"},
+    "summary": {"type": "string"},
+    "limitations": {"type": "array", "items": {"type": "string"}},
+    "source_document_ids": {"type": "array", "items": {"type": "string"}},
+    "generated_at": {"type": "string"},
+    "metadata": {"type": "object"}
+  },
+  "$defs": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["finding_id", "field", "status", "importance", "evidence"],
+        "properties": {
+          "finding_id": {"type": "string"},
+          "field": {"type": "string"},
+          "value": {},
+          "status": {"enum": ["supported", "contradicted", "insufficient", "uncertain", "missing", "needs_review"]},
+          "importance": {"enum": ["critical", "material", "supporting", "incidental"]},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "evidence": {"type": "array", "items": {"type": "object"}}
+        }
+      }
+    }
+  }
+}

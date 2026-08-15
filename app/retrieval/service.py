@@ -157,6 +157,14 @@ class PgVectorDenseRetriever:
                             c.bbox_refs,
                             c.extraction_method,
                             c.min_confidence,
+                            c.parent_chunk_id,
+                            c.chunk_level,
+                            c.heading_path,
+                            c.content_hash,
+                            c.version_id,
+                            c.is_current,
+                            c.ordinal,
+                            c.source_anchor_ids,
                             d.title,
                             d.source_uri,
                             d.access_policy,
@@ -209,6 +217,7 @@ class QdrantDenseRetriever:
                         "vector": query_embedding,
                         "limit": max(top_k * 4, top_k),
                         "with_payload": True,
+                        "filter": _qdrant_filter(filters),
                     },
                 )
                 response.raise_for_status()
@@ -331,12 +340,73 @@ class RetrievalService:
             )
             trailing_candidates = results[candidate_window:]
             results = reranked_candidates + trailing_candidates
+        results = self._diversify_results(results)
         final_results = results[: request.top_k]
+        final_results = await self._expand_parent_context(final_results, request.filters)
         if not request.include_explain:
             final_results = [
                 result.model_copy(update={"explain": None}) for result in final_results
             ]
         return final_results
+
+    def _diversify_results(self, results: list[SearchResult]) -> list[SearchResult]:
+        """Cap duplicate-document results so context budget covers multiple sources."""
+
+        counts: dict[str, int] = {}
+        selected: list[SearchResult] = []
+        for result in results:
+            count = counts.get(result.document_id, 0)
+            if count >= 2:
+                continue
+            counts[result.document_id] = count + 1
+            selected.append(result)
+        return selected
+
+    async def _expand_parent_context(
+        self,
+        results: list[SearchResult],
+        filters: RetrievalFilters,
+    ) -> list[SearchResult]:
+        """Add bounded sibling context for structure-aware chunks."""
+
+        parent_ids = {result.parent_chunk_id for result in results if result.parent_chunk_id}
+        if not parent_ids:
+            return results
+        siblings = await self._repository.list_chunks(
+            filters.model_copy(update={"chunk_levels": []}),
+            limit=max(100, len(parent_ids) * 8),
+        )
+        by_parent: dict[str, list[IndexedChunkRecord]] = {}
+        for sibling in siblings:
+            if sibling.parent_chunk_id in parent_ids:
+                by_parent.setdefault(sibling.parent_chunk_id, []).append(sibling)
+        expanded: list[SearchResult] = []
+        for result in results:
+            if not result.parent_chunk_id:
+                expanded.append(result)
+                continue
+            parent_siblings = sorted(
+                by_parent.get(result.parent_chunk_id, []),
+                key=lambda item: item.ordinal,
+            )
+            selected = [
+                sibling
+                for sibling in parent_siblings
+                if sibling.chunk_id != result.chunk_id
+            ][:2]
+            if not selected:
+                expanded.append(result)
+                continue
+            pieces = [result.text, *(sibling.text for sibling in selected)]
+            combined = "\n\n".join(dict.fromkeys(piece for piece in pieces if piece))
+            metadata = dict(result.metadata)
+            metadata["expanded_sibling_chunk_ids"] = [item.chunk_id for item in selected]
+            expanded.append(
+                result.model_copy(
+                    update={"text": combined[:1600], "metadata": metadata}
+                )
+            )
+        return expanded
 
     async def batch_search(
         self,
@@ -541,6 +611,13 @@ def _build_result(
         bbox_refs=chunk.bbox_refs,
         extraction_method=chunk.extraction_method,
         min_confidence=chunk.min_confidence,
+        parent_chunk_id=chunk.parent_chunk_id,
+        chunk_level=chunk.chunk_level,
+        heading_path=chunk.heading_path,
+        version_id=chunk.version_id,
+        is_current=chunk.is_current,
+        source_anchor_ids=chunk.source_anchor_ids,
+        ordinal=chunk.ordinal,
         score=score,
         text=chunk.text,
         dense_score=dense_score,
@@ -556,6 +633,12 @@ def _build_result(
             "bbox_refs": chunk.bbox_refs,
             "extraction_method": chunk.extraction_method,
             "min_confidence": chunk.min_confidence,
+            "parent_chunk_id": chunk.parent_chunk_id,
+            "chunk_level": chunk.chunk_level,
+            "heading_path": chunk.heading_path,
+            "version_id": chunk.version_id,
+            "is_current": chunk.is_current,
+            "source_anchor_ids": chunk.source_anchor_ids,
             "document_metadata": chunk.document_metadata,
         },
     )
@@ -583,6 +666,13 @@ def _row_to_chunk(row: dict[str, Any]) -> IndexedChunkRecord:
         bbox_refs=list(row.get("bbox_refs") or []),
         extraction_method=row.get("extraction_method"),
         min_confidence=row.get("min_confidence"),
+        parent_chunk_id=row.get("parent_chunk_id"),
+        chunk_level=row.get("chunk_level", "window"),
+        heading_path=list(row.get("heading_path") or []),
+        version_id=row.get("version_id"),
+        is_current=bool(row.get("is_current", True)),
+        source_anchor_ids=list(row.get("source_anchor_ids") or []),
+        ordinal=int(row.get("ordinal", 0)),
         document_metadata=dict(metadata_json),
     )
 
@@ -608,6 +698,13 @@ def _point_to_chunk(point: dict[str, Any]) -> IndexedChunkRecord:
         bbox_refs=list(payload.get("bbox_refs") or []),
         extraction_method=payload.get("extraction_method"),
         min_confidence=payload.get("min_confidence"),
+        parent_chunk_id=payload.get("parent_chunk_id"),
+        chunk_level=payload.get("chunk_level", "window"),
+        heading_path=list(payload.get("heading_path") or []),
+        version_id=payload.get("version_id"),
+        is_current=bool(payload.get("is_current", True)),
+        source_anchor_ids=list(payload.get("source_anchor_ids") or []),
+        ordinal=int(payload.get("ordinal", 0)),
         document_metadata=dict(metadata_json),
     )
 
@@ -668,4 +765,34 @@ def _matches_filters(
         and chunk.index_version != filters.index_version
     ):
         return False
+    if filters.version_ids and chunk.version_id not in filters.version_ids:
+        return False
+    if filters.current_only and not chunk.is_current:
+        return False
+    if filters.chunk_levels and chunk.chunk_level not in filters.chunk_levels:
+        return False
     return True
+
+
+def _qdrant_filter(filters: RetrievalFilters) -> dict[str, object]:
+    """Translate shared retrieval policy into Qdrant payload predicates."""
+
+    must: list[dict[str, object]] = []
+    for key, values in (
+        ("document_id", filters.document_ids),
+        ("source_uri", filters.source_uris),
+        ("access_policy", filters.access_policies),
+        ("version_id", filters.version_ids),
+        ("chunk_level", filters.chunk_levels),
+    ):
+        if values:
+            must.append({"key": key, "match": {"any": values}})
+    if filters.embedding_version is not None:
+        must.append(
+            {"key": "embedding_version", "match": {"value": filters.embedding_version}}
+        )
+    if filters.index_version is not None:
+        must.append({"key": "index_version", "match": {"value": filters.index_version}})
+    if filters.current_only:
+        must.append({"key": "is_current", "match": {"value": True}})
+    return {"must": must} if must else {}

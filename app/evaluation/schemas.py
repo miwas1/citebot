@@ -30,6 +30,14 @@ class EvaluationCase(BaseModel):
     allow_web_search: bool = False
     allow_python_execution: bool = False
     freshness_required: bool = False
+    expected_claim_verdicts: dict[str, str] = Field(default_factory=dict)
+    expected_anchor_ids: list[str] = Field(default_factory=list)
+    expected_structured_fields: dict[str, Any] = Field(default_factory=dict)
+    expected_calculation: dict[str, Any] = Field(default_factory=dict)
+    expected_diff_operations: dict[str, int] = Field(default_factory=dict)
+    requires_abstention: bool = False
+    requires_review: bool = False
+    resource_budget: dict[str, float] = Field(default_factory=dict)
 
 
 class EvaluationDataset(BaseModel):
@@ -85,6 +93,9 @@ class EvaluationCaseResult(BaseModel):
     retrieved_document_ids: list[str] = Field(default_factory=list)
     retrieved_source_uris: list[str] = Field(default_factory=list)
     citation_chunk_ids: list[str] = Field(default_factory=list)
+    claim_verdicts: list[str] = Field(default_factory=list)
+    citation_anchor_ids: list[str] = Field(default_factory=list)
+    answer_status: str = "draft"
     metrics: dict[str, float] = Field(default_factory=dict)
     threshold_failures: list[str] = Field(default_factory=list)
     passed: bool = True

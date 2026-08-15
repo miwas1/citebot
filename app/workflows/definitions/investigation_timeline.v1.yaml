@@ -1,0 +1,10 @@
+workflow_id: investigation_timeline
+version: v1
+review_policy: always_review
+required_fields:
+  - timestamp
+  - event
+  - entity
+  - evidence
+  - certainty
+prohibited_use: final disciplinary or legal decision

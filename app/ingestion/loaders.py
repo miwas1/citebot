@@ -11,12 +11,17 @@ from xml.etree import ElementTree
 
 from app.core.config import Settings
 from app.ingestion.ocr import PaddleOcrEngine, TesseractOcrEngine
+from app.ingestion.parsers.docling import DoclingParser
+from app.ingestion.parsers.ppstructure import PPStructureParser
+from app.ingestion.quality import assess_page, route_page
 from app.ingestion.schemas import (
     DocumentElement,
+    DocumentTable,
     LoadedDocument,
     StructuredDocument,
     StructuredPage,
 )
+from app.ingestion.table_serializer import table_to_markdown
 
 
 class LocalCorpusLoader:
@@ -98,6 +103,26 @@ class LocalCorpusLoader:
     def _load_pdf_document(self, file_path: Path) -> LoadedDocument:
         """Extract native PDF text and OCR only pages below the quality gate."""
 
+        if self._settings.document_parser in {"docling", "ppstructure"}:
+            parser = (
+                DoclingParser()
+                if self._settings.document_parser == "docling"
+                else PPStructureParser()
+            )
+            return parser.parse(
+                LoadedDocument(
+                    source_uri=str(file_path.resolve()),
+                    title=file_path.stem.replace("_", " ").strip() or file_path.name,
+                    text="",
+                    metadata={
+                        "file_name": file_path.name,
+                        "file_type": "pdf",
+                        "parser_name": parser.name,
+                    },
+                    structured=StructuredDocument(media_type="application/pdf"),
+                )
+            )
+
         try:
             import fitz  # type: ignore[import-not-found]
         except ImportError as error:
@@ -109,18 +134,28 @@ class LocalCorpusLoader:
                     f"{self._settings.ocr_max_pages}"
                 )
             pages: list[StructuredPage] = []
+            tables: list[DocumentTable] = []
             page_texts: list[str] = []
             for page_number, page in enumerate(pdf, start=1):
                 native_text = page.get_text("text") or ""
                 coverage = min(1.0, len(native_text.strip()) / 100.0)
                 blocks = self._native_blocks(page, page_number, native_text)
+                page_tables, table_elements = self._native_tables(page, page_number)
+                tables.extend(page_tables)
+                blocks.extend(table_elements)
+                if page_tables:
+                    native_text = "\n\n".join(
+                        [native_text, *(table_to_markdown(table) for table in page_tables)]
+                    ).strip()
                 extraction_method = "native"
                 ocr_confidence = None
+                quality = assess_page(native_text, blocks)
+                route = route_page(quality, self._settings.ocr_min_native_text_coverage)
                 if (
                     self._settings.document_parser == "ocr"
                     or (
                         self._settings.document_parser == "auto"
-                        and coverage < self._settings.ocr_min_native_text_coverage
+                        and route == "ocr"
                     )
                 ):
                     if self._settings.ocr_provider == "none":
@@ -147,6 +182,11 @@ class LocalCorpusLoader:
                         extraction_method=extraction_method,
                         native_text_coverage=coverage,
                         ocr_confidence=ocr_confidence,
+                        quality_issues=(
+                            [{"route": route, "signals": quality.as_dict()}]
+                            if route != "native"
+                            else []
+                        ),
                         elements=blocks,
                     )
                 )
@@ -155,9 +195,15 @@ class LocalCorpusLoader:
                 StructuredDocument(
                     document_id=str(uuid5(NAMESPACE_URL, str(file_path.resolve()))),
                     media_type="application/pdf",
-                    parser_version="pymupdf-structured-v1",
+                    parser_version="pymupdf-structured-v2",
                     language=self._settings.ocr_languages.split(",")[0].strip() or None,
                     pages=pages,
+                    tables=tables,
+                    quality_summary={
+                        "page_count": len(pages),
+                        "table_count": len(tables),
+                        "ocr_pages": sum(page.extraction_method == "ocr" for page in pages),
+                    },
                 ),
                 text,
             )
@@ -168,6 +214,74 @@ class LocalCorpusLoader:
                 metadata={"file_name": file_path.name, "file_type": "pdf"},
                 structured=structured,
             )
+
+    def _native_tables(
+        self,
+        page: object,
+        page_number: int,
+    ) -> tuple[list[DocumentTable], list[DocumentElement]]:
+        """Extract born-digital PDF tables when the installed PyMuPDF supports it."""
+
+        find_tables = getattr(page, "find_tables", None)
+        if not callable(find_tables):
+            return [], []
+        try:
+            finder = find_tables()
+            raw_tables = getattr(finder, "tables", []) or []
+        except Exception:
+            return [], []
+        tables: list[DocumentTable] = []
+        elements: list[DocumentElement] = []
+        for table_index, raw_table in enumerate(raw_tables):
+            try:
+                extracted = raw_table.extract() or []
+            except Exception:
+                continue
+            rows = [
+                [str(cell or "").strip() for cell in row]
+                for row in extracted
+                if any(str(cell or "").strip() for cell in row)
+            ]
+            if not rows:
+                continue
+            table_id = f"p{page_number}-table-{table_index}"
+            bbox = getattr(raw_table, "bbox", None)
+            source_element_ids: list[str] = []
+            for row_index, row in enumerate(rows):
+                for column_index, value in enumerate(row):
+                    if not value:
+                        continue
+                    element_id = f"{table_id}-r{row_index}-c{column_index}"
+                    source_element_ids.append(element_id)
+                    elements.append(
+                        DocumentElement(
+                            element_id=element_id,
+                            element_type="table_cell",
+                            text=value,
+                            bbox=(
+                                tuple(float(item) for item in bbox)
+                                if bbox and len(bbox) == 4
+                                else None
+                            ),
+                            reading_order=len(elements),
+                            source_engine="pymupdf-table",
+                            table_id=table_id,
+                            row_index=row_index,
+                            column_index=column_index,
+                        )
+                    )
+            tables.append(
+                DocumentTable(
+                    table_id=table_id,
+                    page_numbers=[page_number],
+                    headers=rows[0],
+                    rows=rows[1:],
+                    source_element_ids=source_element_ids,
+                    confidence=1.0,
+                    attributes={"bbox": list(bbox) if bbox and len(bbox) == 4 else None},
+                )
+            )
+        return tables, elements
 
     def _native_blocks(
         self,

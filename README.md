@@ -86,6 +86,13 @@ The runtime never downloads models after this command succeeds.
 make local-setup
 ```
 
+On the first offline startup, CiteBot automatically queues the bundled
+`data/sample_corpus` for ingestion. The sample corpus is included so a new
+installation has something to search while the document worker processes it.
+This bootstrap is idempotent: queued, running, and completed sample jobs are
+not duplicated. Set `SAMPLE_CORPUS_AUTO_INGEST=false` if you want an empty
+workspace instead.
+
 Services started:
 
 - CiteBot through Caddy on `http://127.0.0.1/`
@@ -100,7 +107,8 @@ API remains bound to host loopback on port 8000; Caddy is the public listener.
 
 The Compose defaults target a 16 GB CPU-only workstation: one document worker,
 one active research generation with a two-request waiting queue, a 4,096-token
-LLM context, four-item embedding batches, 100-page PDFs, and bounded per-service
+LLM context, four-item embedding batches, 100-page PDFs, up to 600 documents per
+ingestion source, and bounded per-service
 memory/CPU limits. Keep at least 2 GB of host memory available and treat
 sustained swap as a failed capacity signal. The sparse index is SQLite FTS5 at
 `storage/sparse_index.sqlite3`; a legacy `sparse_index.json` is migrated without
@@ -120,7 +128,7 @@ For fast tests without model services, set `EMBEDDING_PROVIDER=local`, `ANSWER_P
 
 ```bash
 make dev-up          # start all services
-make ingest-sample   # ingest the bundled sample corpus
+make ingest-sample   # manually re-run the bundled sample corpus ingestion
 make search-sample   # run a test search
 make test            # run the test suite
 make dev-logs        # follow API and document-worker logs
@@ -138,6 +146,10 @@ provides:
 - streaming research conversations with durable history;
 - citations that open in a supporting-evidence inspector; and
 - responsive desktop and mobile layouts.
+
+The **Guide** link in the dashboard opens the in-app operator documentation at
+`/docs.html`. It covers first-run setup, asking the library, document versions,
+workflow review, and local operations.
 
 When `RESEARCH_API_KEY` or `ADMIN_API_KEY` is configured, open the gear menu in
 the workspace and enter both values. Keys are retained in that browser's local

@@ -81,6 +81,12 @@ docker compose ps
 docker compose logs --tail=100 api document-worker
 ```
 
+The first offline startup automatically queues the bundled sample corpus at
+`/app/data/sample_corpus`. Open the workspace while `document-worker` processes
+it; the sample documents will appear in the Documents view and can be queried
+as soon as their status becomes **Ready**. The bootstrap is idempotent and can
+be disabled with `SAMPLE_CORPUS_AUTO_INGEST=false`.
+
 The API is reachable internally at `http://127.0.0.1:8000`. Caddy publishes
 CiteBot on port 80 and Dozzle on port 8888. Qdrant, embedding, and LLM ports
 remain exposed only on the internal Compose network.
@@ -166,11 +172,12 @@ curl --fail http://127.0.0.1:8000/api/v1/ready
 From an authorized client, open `https://citebot.example.com/`. In the gear
 menu, enter the research and admin API keys. Then:
 
-1. upload a small text or PDF document;
-2. wait until its status changes to **Ready**;
-3. ask a question whose answer is present in the document;
-4. open a citation and confirm its supporting passage; and
-5. refresh the browser and confirm the conversation remains in **Recent**.
+1. open the **Guide** link from the dashboard if you need the operator reference;
+2. confirm the bundled sample documents or upload a small text or PDF document;
+3. wait until its status changes to **Ready**;
+4. ask a question whose answer is present in the document;
+5. open a citation and confirm its supporting passage; and
+6. refresh the browser and confirm the conversation remains in **Recent**.
 
 A `401` response normally means the corresponding browser key is missing or
 incorrect. A document that remains queued usually means `document-worker` is

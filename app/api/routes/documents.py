@@ -13,7 +13,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from app.core.dependencies import get_container
 from app.core.lifecycle import ServiceContainer
 from app.core.security import require_admin_access
-from app.ingestion.schemas import DocumentSummary, JobStatusResponse, UploadResponse
+from app.ingestion.schemas import (
+    DocumentSummary,
+    DocumentVersionSummary,
+    JobStatusResponse,
+    UploadResponse,
+)
 
 router = APIRouter(prefix="/documents")
 ContainerDependency = Annotated[ServiceContainer, Depends(get_container)]
@@ -42,6 +47,17 @@ async def list_document_jobs(
     """List recent upload and ingestion jobs."""
 
     return await container.ingestion_service.list_jobs()
+
+
+@router.get("/{document_id}/versions", response_model=list[DocumentVersionSummary])
+async def list_document_versions(
+    document_id: str,
+    container: ContainerDependency,
+    _: AdminAccessDependency,
+) -> list[DocumentVersionSummary]:
+    """List immutable source versions for one logical document."""
+
+    return await container.ingestion_service.list_versions(document_id)
 
 
 @router.post("/uploads", response_model=UploadResponse, status_code=status.HTTP_201_CREATED)

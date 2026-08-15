@@ -31,6 +31,13 @@ class IndexedChunkRecord:
     bbox_refs: list[list[float]]
     extraction_method: str | None
     min_confidence: float | None
+    parent_chunk_id: str | None
+    chunk_level: str
+    heading_path: list[str]
+    version_id: str | None
+    is_current: bool
+    source_anchor_ids: list[str]
+    ordinal: int
     document_metadata: dict[str, Any]
 
 
@@ -71,6 +78,12 @@ class RetrievalRepository:
                 statement = statement.where(
                     ChunkRecord.index_version == filters.index_version
                 )
+            if filters.version_ids:
+                statement = statement.where(ChunkRecord.version_id.in_(filters.version_ids))
+            if filters.current_only:
+                statement = statement.where(ChunkRecord.is_current.is_(True))
+            if filters.chunk_levels:
+                statement = statement.where(ChunkRecord.chunk_level.in_(filters.chunk_levels))
         if limit is not None:
             statement = statement.limit(limit)
         async with self._session_manager.session() as session:
@@ -100,5 +113,12 @@ class RetrievalRepository:
             bbox_refs=list(chunk.bbox_refs or []),
             extraction_method=chunk.extraction_method,
             min_confidence=chunk.min_confidence,
+            parent_chunk_id=chunk.parent_chunk_id,
+            chunk_level=chunk.chunk_level,
+            heading_path=list(chunk.heading_path or []),
+            version_id=chunk.version_id,
+            is_current=chunk.is_current,
+            source_anchor_ids=list(chunk.source_anchor_ids or []),
+            ordinal=chunk.ordinal,
             document_metadata=dict(document.metadata_json or {}),
         )

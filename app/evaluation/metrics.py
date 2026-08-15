@@ -66,6 +66,7 @@ def compute_case_metrics(
         len(verification_claims),
         default=0.0,
     )
+    metrics.update(_claim_metrics(case, response))
     if case.reference_answer:
         metrics["reference_overlap_f1"] = token_overlap_f1(
             case.reference_answer,
@@ -77,6 +78,64 @@ def compute_case_metrics(
             response.answer.direct_answer,
             response.answer.supporting_evidence,
             response.answer.limitations,
+        )
+    return metrics
+
+
+def _claim_metrics(case: EvaluationCase, response: ResearchResponse) -> dict[str, float]:
+    """Score claim verdicts, anchors, abstention, and review policy deterministically."""
+
+    claims = response.claims or response.verification.claims
+    metrics: dict[str, float] = {
+        "citation_anchor_validity": _safe_ratio(
+            sum(1 for citation in response.answer.citations if citation.chunk_id),
+            len(response.answer.citations),
+            default=1.0,
+        ),
+        "contradiction_recall": 0.0,
+        "false_supported_rate": 0.0,
+    }
+    expected = list(case.expected_claim_verdicts.values())
+    actual = [claim.verdict for claim in claims]
+    if expected:
+        matched = sum(1 for verdict in expected if verdict in actual)
+        metrics["claim_verdict_recall"] = _safe_ratio(matched, len(expected), default=0.0)
+        expected_contradictions = sum(verdict == "contradicted" for verdict in expected)
+        actual_contradictions = sum(verdict == "contradicted" for verdict in actual)
+        metrics["contradiction_recall"] = _safe_ratio(
+            min(actual_contradictions, expected_contradictions),
+            expected_contradictions,
+            default=1.0,
+        )
+    if case.requires_abstention:
+        metrics["abstention_compliance"] = float(
+            response.answer.answer_status in {"insufficient_evidence", "needs_review"}
+        )
+    if case.requires_review:
+        metrics["review_requirement_compliance"] = float(
+            response.answer.answer_status == "needs_review"
+        )
+    if case.expected_anchor_ids:
+        actual_anchors = {
+            anchor_id
+            for citation in response.answer.citations
+            for anchor_id in citation.source_anchor_ids
+        }
+        metrics["expected_anchor_recall"] = _safe_ratio(
+            len(actual_anchors & set(case.expected_anchor_ids)),
+            len(case.expected_anchor_ids),
+            default=0.0,
+        )
+    if claims:
+        material_claims = [
+            claim
+            for claim in claims
+            if claim.verdict not in {"insufficient", "uncertain"}
+        ]
+        metrics["false_supported_rate"] = _safe_ratio(
+            sum(claim.verdict == "supported" for claim in material_claims if claim.failure_reason),
+            len(material_claims),
+            default=0.0,
         )
     return metrics
 

@@ -29,6 +29,7 @@ class RetrievalPlan(BaseModel):
     use_python: bool = False
     insufficient_context: bool = False
     reason_codes: list[str] = Field(default_factory=list)
+    decomposed_queries: list[str] = Field(default_factory=list)
 
 
 class ResearchContext(BaseModel):
@@ -72,6 +73,7 @@ class Citation(BaseModel):
     location_marker: str | None = None
     page: int | None = None
     element_ids: list[str] = Field(default_factory=list)
+    source_anchor_ids: list[str] = Field(default_factory=list)
     bbox_refs: list[list[float]] = Field(default_factory=list)
     source_type: Literal["internal", "web", "analysis"] = "internal"
     support_span: str
@@ -87,17 +89,35 @@ class ResearchAnswer(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     limitations: str | None = None
     follow_up_suggestion: str | None = None
+    answer_status: Literal[
+        "draft",
+        "supported",
+        "qualified",
+        "insufficient_evidence",
+        "needs_review",
+    ] = "draft"
 
 
 class ClaimVerification(BaseModel):
     """Verdict for one claim-to-citation mapping."""
 
     citation_id: str
+    claim_id: str | None = None
     claim_text: str
     supporting_chunk_ids: list[str] = Field(default_factory=list)
-    verdict: Literal["supported", "partially_supported", "unsupported", "stale"]
+    verdict: Literal[
+        "supported",
+        "partially_supported",
+        "unsupported",
+        "contradicted",
+        "insufficient",
+        "uncertain",
+        "stale",
+    ]
     confidence: float
     failure_reason: str | None = None
+    evidence_span: str | None = None
+    deterministic_checks: dict[str, object] = Field(default_factory=dict)
 
 
 class CitationVerificationResult(BaseModel):
@@ -106,6 +126,9 @@ class CitationVerificationResult(BaseModel):
     overall_verdict: Literal["supported", "partially_supported", "unsupported"]
     claims: list[ClaimVerification] = Field(default_factory=list)
     unsupported_citation_ids: list[str] = Field(default_factory=list)
+    verification_version: str = "lexical-v2"
+    evidence_coverage: float = 0.0
+    contradiction_count: int = 0
 
 
 class ResearchMemory(BaseModel):
@@ -143,6 +166,11 @@ class ResearchResponse(BaseModel):
     token_usage: dict[str, int] = Field(default_factory=dict)
     state_transitions: list[str] = Field(default_factory=list)
     retrieved_contexts: list[ResearchContext] = Field(default_factory=list)
+    claims: list[ClaimVerification] = Field(default_factory=list)
+    evidence_coverage: float = 0.0
+    contradiction_count: int = 0
+    verification_version: str = "lexical-v2"
+    stage_timings_ms: dict[str, float] = Field(default_factory=dict)
     error: str | None = None
 
 

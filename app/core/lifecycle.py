@@ -10,12 +10,20 @@ from fastapi import FastAPI
 from app.agents.generation import build_answer_generator
 from app.agents.service import ResearchAgentService
 from app.agents.session_store import ResearchSessionStore
+from app.calculation.repository import CalculationRepository
+from app.calculation.service import CalculationService
 from app.core.admission import BoundedAdmission
 from app.core.config import Settings, get_settings
 from app.core.health import HealthService
 from app.core.model_manifest import verify_model_manifest
 from app.db.session import DatabaseSessionManager
+from app.diffing.repository import DiffRepository
+from app.diffing.service import DocumentDiffService
 from app.evaluation.service import EvaluationService
+from app.evidence.nli import CompactNliVerifier
+from app.evidence.repository import EvidenceLedgerRepository
+from app.evidence.service import EvidenceService
+from app.ingestion.bootstrap import ensure_sample_corpus
 from app.ingestion.chunker import SlidingWindowChunker
 from app.ingestion.embedder import build_embedder
 from app.ingestion.loaders import LocalCorpusLoader
@@ -31,6 +39,10 @@ from app.retrieval.service import RetrievalService
 from app.tools.citation_verifier import CitationVerifier
 from app.tools.python_sandbox import PythonSandboxTool
 from app.tools.web_search import build_web_search_tool
+from app.workflows.checkpointer import SQLiteCheckpointSaver
+from app.workflows.repository import WorkflowRepository
+from app.workflows.review_gate import ReviewGate
+from app.workflows.service import WorkflowService
 
 
 @dataclass(slots=True)
@@ -40,12 +52,21 @@ class ServiceContainer:
     settings: Settings
     session_manager: DatabaseSessionManager
     health_service: HealthService
+    ingestion_repository: IngestionRepository
     ingestion_service: IngestionService
     retrieval_service: RetrievalService
     research_agent_service: ResearchAgentService
     research_session_store: ResearchSessionStore
     evaluation_service: EvaluationService
     research_admission: BoundedAdmission
+    workflow_service: WorkflowService
+    workflow_repository: WorkflowRepository
+    calculation_service: CalculationService
+    diff_service: DocumentDiffService
+    evidence_repository: EvidenceLedgerRepository
+    calculation_repository: CalculationRepository
+    diff_repository: DiffRepository
+    review_gate: ReviewGate
 
     async def initialize(self) -> None:
         """Initialize storage, tables, and external writer schemas."""
@@ -54,6 +75,11 @@ class ServiceContainer:
             verify_model_manifest(self.settings.model_manifest_path)
         await self.session_manager.initialize()
         await self.ingestion_service.initialize()
+        await ensure_sample_corpus(
+            self.settings,
+            self.ingestion_repository,
+            self.ingestion_service,
+        )
 
     async def close(self) -> None:
         """Release runtime resources during application shutdown."""
@@ -90,8 +116,20 @@ def build_container(settings: Settings) -> ServiceContainer:
     answer_generator = build_answer_generator(settings)
     web_search_tool = build_web_search_tool(settings)
     python_sandbox = PythonSandboxTool(settings)
-    citation_verifier = CitationVerifier()
+    nli_verifier = (
+        CompactNliVerifier(
+            settings.verification_model,
+            max_pairs=settings.verification_max_pairs,
+        )
+        if settings.verification_provider == "sentence-transformers"
+        else None
+    )
+    citation_verifier = CitationVerifier(
+        nli_verifier=nli_verifier,
+        max_nli_pairs=settings.verification_max_pairs,
+    )
     session_store = ResearchSessionStore(session_manager)
+    evidence_repository = EvidenceLedgerRepository(session_manager)
     retrieval_service = RetrievalService(
         settings=settings,
         session_manager=session_manager,
@@ -120,6 +158,8 @@ def build_container(settings: Settings) -> ServiceContainer:
         python_sandbox=python_sandbox,
         citation_verifier=citation_verifier,
         session_store=session_store,
+        evidence_repository=evidence_repository,
+        evidence_service=EvidenceService(),
     )
     evaluation_service = EvaluationService(
         settings=settings,
@@ -127,10 +167,16 @@ def build_container(settings: Settings) -> ServiceContainer:
         research_agent_service=research_agent_service,
     )
     health_service = HealthService(settings, session_manager, qdrant_writer)
+    workflow_repository = WorkflowRepository(session_manager)
+    calculation_repository = CalculationRepository(session_manager)
+    diff_repository = DiffRepository(session_manager)
+    checkpoint_path = settings.object_storage_path.parent / "langgraph-checkpoints.sqlite3"
+    review_gate = ReviewGate(SQLiteCheckpointSaver(checkpoint_path))
     return ServiceContainer(
         settings=settings,
         session_manager=session_manager,
         health_service=health_service,
+        ingestion_repository=repository,
         ingestion_service=ingestion_service,
         retrieval_service=retrieval_service,
         research_agent_service=research_agent_service,
@@ -141,6 +187,14 @@ def build_container(settings: Settings) -> ServiceContainer:
             queue_size=settings.research_queue_size,
             timeout_seconds=settings.research_queue_timeout_seconds,
         ),
+        workflow_service=WorkflowService(),
+        workflow_repository=workflow_repository,
+        calculation_service=CalculationService(),
+        diff_service=DocumentDiffService(),
+        evidence_repository=evidence_repository,
+        calculation_repository=calculation_repository,
+        diff_repository=diff_repository,
+        review_gate=review_gate,
     )
 
 

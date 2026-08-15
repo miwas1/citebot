@@ -14,6 +14,7 @@ from app.ingestion.object_store import LocalObjectStore
 from app.ingestion.repository import IngestionRepository
 from app.ingestion.schemas import (
     DocumentSummary,
+    DocumentVersionSummary,
     IngestionMetrics,
     JobStatusResponse,
     SearchResult,
@@ -143,6 +144,11 @@ class IngestionService:
 
         return await self._repository.list_jobs(limit)
 
+    async def list_versions(self, logical_document_id: str) -> list[DocumentVersionSummary]:
+        """Expose immutable document revisions to API and workflow callers."""
+
+        return await self._repository.list_versions(logical_document_id)
+
     async def _process_job(
         self,
         job_id: str,
@@ -198,6 +204,7 @@ class IngestionService:
                         document.document_id,
                         document.structured.model_dump(mode="json"),
                         self._settings.structured_document_path,
+                        document.content_hash,
                     )
                     document = document.model_copy(
                         update={
@@ -209,6 +216,7 @@ class IngestionService:
                         }
                     )
                 await self._repository.save_document(document, chunks, raw_text_path)
+                await self._repository.save_provenance(document, chunks)
                 await self._pgvector_writer.upsert_chunks(document, chunks, embeddings)
                 await self._qdrant_writer.upsert_chunks(document, chunks, embeddings)
                 await self._sparse_index.replace_document_chunks(document, chunks)

@@ -1,0 +1,21 @@
+{
+  "dataset_name": "baseline",
+  "dataset_version": "v1",
+  "description": "Small deterministic baseline for local pipeline smoke checks.",
+  "cases": [
+    {
+      "eval_case_id": "baseline-grounded-answer",
+      "question": "What does a grounded answer require?",
+      "expected_answer_traits": ["evidence", "citation"],
+      "expected_claim_verdicts": {"claim-1": "supported"},
+      "requires_review": false
+    },
+    {
+      "eval_case_id": "baseline-abstention",
+      "question": "What is not present in the source?",
+      "expected_answer_traits": ["insufficient", "evidence"],
+      "requires_abstention": true,
+      "requires_review": true
+    }
+  ]
+}

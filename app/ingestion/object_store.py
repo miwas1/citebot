@@ -30,11 +30,13 @@ class LocalObjectStore:
         document_id: str,
         payload: dict[str, Any],
         base_path: Path,
+        version_id: str | None = None,
     ) -> str:
         """Write a versioned structured-document JSON artifact atomically."""
 
         base_path.mkdir(parents=True, exist_ok=True)
-        output_path = base_path / f"{document_id}.structured.json"
+        suffix = version_id or payload.get("source_content_hash") or "current"
+        output_path = base_path / f"{document_id}.{suffix}.structured.json"
         temporary_path = output_path.with_suffix(".tmp")
         temporary_path.write_text(
             json.dumps(payload, ensure_ascii=False, sort_keys=True),

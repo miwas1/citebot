@@ -1,0 +1,9 @@
+workflow_id: vendor_comparison
+version: v1
+review_policy: conditional
+required_fields:
+  - criterion
+  - vendor_value
+  - evidence
+  - exception
+prohibited_use: automatic purchasing decision

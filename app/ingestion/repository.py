@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, update
 
-from app.db.models import ChunkRecord, DocumentRecord, IngestionJobRecord
+from app.db.models import (
+    ChunkRecord,
+    DocumentRecord,
+    DocumentVersionRecord,
+    IngestionJobRecord,
+    SourceAnchorRecord,
+)
 from app.db.session import DatabaseSessionManager
+from app.ingestion.provenance import anchor_id, text_hash
 from app.ingestion.schemas import (
     CanonicalDocument,
     ChunkPayload,
     DocumentState,
     DocumentSummary,
+    DocumentVersionSummary,
     IngestionMetrics,
     JobStatusResponse,
 )
@@ -210,6 +219,21 @@ class IngestionRepository:
                 return None
             return self._to_job_response(record)
 
+    async def has_active_or_completed_job(self, source_path: str) -> bool:
+        """Check whether a bootstrap source already has durable ingestion work."""
+
+        source_paths = {source_path, str(Path(source_path).resolve())}
+        async with self._session_manager.session() as session:
+            count = await session.scalar(
+                select(func.count())
+                .select_from(IngestionJobRecord)
+                .where(
+                    IngestionJobRecord.source_path.in_(source_paths),
+                    IngestionJobRecord.status.in_(["queued", "running", "completed"]),
+                )
+            )
+        return bool(count)
+
     async def get_document_state(self, source_uri: str) -> DocumentState | None:
         """Return the stored document hash for the given source URI."""
 
@@ -261,9 +285,9 @@ class IngestionRepository:
                 record.raw_text_path = raw_text_path
                 record.metadata_json = document.metadata
             await session.execute(
-                delete(ChunkRecord).where(
-                    ChunkRecord.document_id == document.document_id
-                )
+                update(ChunkRecord)
+                .where(ChunkRecord.document_id == document.document_id)
+                .values(is_current=False)
             )
             session.add_all(
                 [
@@ -284,6 +308,14 @@ class IngestionRepository:
                         embedding_model=chunk.embedding_model,
                         embedding_version=chunk.embedding_version,
                         index_version=chunk.index_version,
+                        parent_chunk_id=chunk.parent_chunk_id,
+                        chunk_level=chunk.chunk_level,
+                        heading_path=chunk.heading_path,
+                        content_hash=chunk.content_hash,
+                        version_id=chunk.version_id,
+                        is_current=chunk.is_current,
+                        ordinal=chunk.ordinal,
+                        source_anchor_ids=chunk.source_anchor_ids,
                     )
                     for chunk in chunks
                 ]
@@ -303,6 +335,84 @@ class IngestionRepository:
             return IngestionMetrics(
                 documents=documents or 0, chunks=chunks or 0, jobs=jobs or 0
             )
+
+    async def save_provenance(
+        self,
+        document: CanonicalDocument,
+        chunks: list[ChunkPayload],
+    ) -> None:
+        """Persist an immutable content version and deterministic source anchors."""
+
+        version_id = document.content_hash
+        logical_document_id = document.document_id
+        async with self._session_manager.session() as session:
+            existing = await session.get(DocumentVersionRecord, version_id)
+            if existing is None:
+                predecessor_version_id = await self._latest_version_id(
+                    session, logical_document_id
+                )
+                await session.execute(
+                    update(DocumentVersionRecord)
+                    .where(
+                        DocumentVersionRecord.logical_document_id == logical_document_id,
+                        DocumentVersionRecord.is_current.is_(True),
+                    )
+                    .values(is_current=False, superseded_at=datetime.now(tz=UTC))
+                )
+                structured = document.structured
+                session.add(
+                    DocumentVersionRecord(
+                        version_id=version_id,
+                        logical_document_id=logical_document_id,
+                        document_id=document.document_id,
+                        content_hash=document.content_hash,
+                        predecessor_version_id=predecessor_version_id,
+                        version_label=document.metadata.get("version_label"),
+                        parser_name=structured.parser_version.split("-", 1)[0]
+                        if structured
+                        else "native",
+                        parser_version=structured.parser_version if structured else "v1",
+                        schema_version=structured.schema_version if structured else "structured-v2",
+                        source_size_bytes=document.metadata.get("size_bytes"),
+                        page_count=len(structured.pages) if structured else None,
+                        language=structured.language if structured else None,
+                        is_current=True,
+                    )
+                )
+            for chunk in chunks:
+                for index, element_id in enumerate(chunk.element_ids):
+                    source_anchor_id = anchor_id(version_id, element_id)
+                    if await session.get(SourceAnchorRecord, source_anchor_id) is not None:
+                        continue
+                    bbox = chunk.bbox_refs[index] if index < len(chunk.bbox_refs) else None
+                    session.add(
+                        SourceAnchorRecord(
+                            anchor_id=source_anchor_id,
+                            version_id=version_id,
+                            element_id=element_id,
+                            chunk_id=chunk.chunk_id,
+                            page_number=chunk.page,
+                            char_start=chunk.char_start,
+                            char_end=chunk.char_end,
+                            bbox_json=list(bbox) if bbox else None,
+                            text_hash=text_hash(chunk.text),
+                            anchor_kind="observed",
+                            extraction_method=chunk.extraction_method,
+                            confidence=chunk.min_confidence,
+                        )
+                    )
+
+    async def _latest_version_id(self, session, logical_document_id: str) -> str | None:
+        """Return the prior current version before inserting a new one."""
+
+        return await session.scalar(
+            select(DocumentVersionRecord.version_id)
+            .where(
+                DocumentVersionRecord.logical_document_id == logical_document_id,
+                DocumentVersionRecord.is_current.is_(True),
+            )
+            .limit(1)
+        )
 
     async def list_documents(self, limit: int = 200) -> list[DocumentSummary]:
         """Return recently ingested documents for the user-facing library."""
@@ -333,6 +443,43 @@ class IngestionRepository:
                 else None,
             )
             for document, chunk_count in rows
+        ]
+
+    async def list_versions(
+        self,
+        logical_document_id: str,
+        limit: int = 100,
+    ) -> list[DocumentVersionSummary]:
+        """Return immutable versions ordered from newest to oldest."""
+
+        async with self._session_manager.session() as session:
+            records = (
+                await session.scalars(
+                    select(DocumentVersionRecord)
+                    .where(DocumentVersionRecord.logical_document_id == logical_document_id)
+                    .order_by(DocumentVersionRecord.created_at.desc())
+                    .limit(limit)
+                )
+            ).all()
+        return [
+            DocumentVersionSummary(
+                version_id=record.version_id,
+                logical_document_id=record.logical_document_id,
+                document_id=record.document_id,
+                predecessor_version_id=record.predecessor_version_id,
+                content_hash=record.content_hash,
+                version_label=record.version_label,
+                effective_at=record.effective_at,
+                superseded_at=record.superseded_at,
+                is_current=record.is_current,
+                parser_name=record.parser_name,
+                parser_version=record.parser_version,
+                schema_version=record.schema_version,
+                page_count=record.page_count,
+                language=record.language,
+                created_at=record.created_at,
+            )
+            for record in records
         ]
 
     async def list_jobs(self, limit: int = 100) -> list[JobStatusResponse]:

@@ -80,17 +80,12 @@ class SparseIndex:
         document: CanonicalDocument,
         chunks: list[ChunkPayload],
     ) -> None:
-        """Execute the delete-and-insert operation under one SQLite transaction."""
+        """Mark prior versions stale and insert the new searchable version."""
 
         with self._connect() as connection:
             self._create_schema(connection)
             connection.execute(
-                "DELETE FROM sparse_chunks_fts WHERE chunk_id IN "
-                "(SELECT chunk_id FROM sparse_chunks WHERE document_id = ?)",
-                (document.document_id,),
-            )
-            connection.execute(
-                "DELETE FROM sparse_chunks WHERE document_id = ?",
+                "UPDATE sparse_chunks SET is_current = 0 WHERE document_id = ?",
                 (document.document_id,),
             )
             for chunk in chunks:
@@ -111,6 +106,14 @@ class SparseIndex:
                     "bbox_refs": chunk.bbox_refs,
                     "extraction_method": chunk.extraction_method,
                     "min_confidence": chunk.min_confidence,
+                    "parent_chunk_id": chunk.parent_chunk_id,
+                    "chunk_level": chunk.chunk_level,
+                    "heading_path": chunk.heading_path,
+                    "content_hash": chunk.content_hash,
+                    "version_id": chunk.version_id,
+                    "is_current": chunk.is_current,
+                    "ordinal": chunk.ordinal,
+                    "source_anchor_ids": chunk.source_anchor_ids,
                 }
                 self._insert_chunk(connection, value)
 
@@ -122,6 +125,7 @@ class SparseIndex:
     ) -> list[SearchResult]:
         """Run one bounded FTS query and convert rows into API results."""
 
+        filters = filters or RetrievalFilters()
         terms = self._tokenize(query)
         if not terms:
             return []
@@ -153,6 +157,10 @@ class SparseIndex:
             if filters.index_version is not None:
                 conditions.append("c.index_version = ?")
                 parameters.append(filters.index_version)
+            self._add_filter(conditions, parameters, "c.version_id", filters.version_ids)
+            if filters.current_only:
+                conditions.append("c.is_current = 1")
+            self._add_filter(conditions, parameters, "c.chunk_level", filters.chunk_levels)
         parameters.append(max(1, min(top_k, 50)))
         statement = f"""
             SELECT
@@ -160,7 +168,9 @@ class SparseIndex:
                 c.location_marker, c.access_policy, c.embedding_version,
                 c.index_version, c.section, c.page, c.metadata_json,
                 c.text, c.element_ids_json, c.bbox_refs_json,
-                c.extraction_method, c.min_confidence,
+                c.extraction_method, c.min_confidence, c.parent_chunk_id,
+                c.chunk_level, c.heading_path_json, c.content_hash, c.version_id,
+                c.is_current, c.ordinal, c.source_anchor_ids_json,
                 bm25(sparse_chunks_fts) AS rank_score
             FROM sparse_chunks_fts
             JOIN sparse_chunks AS c ON c.chunk_id = sparse_chunks_fts.chunk_id
@@ -182,8 +192,10 @@ class SparseIndex:
                 chunk_id, document_id, title, source_uri, location_marker,
                 access_policy, embedding_version, index_version, section, page,
                 metadata_json, text, element_ids_json, bbox_refs_json,
-                extraction_method, min_confidence
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                extraction_method, min_confidence, parent_chunk_id, chunk_level,
+                heading_path_json, content_hash, version_id, is_current, ordinal,
+                source_anchor_ids_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 chunk_id,
@@ -202,6 +214,14 @@ class SparseIndex:
                 json.dumps(value.get("bbox_refs", [])),
                 value.get("extraction_method"),
                 value.get("min_confidence"),
+                value.get("parent_chunk_id"),
+                value.get("chunk_level", "window"),
+                json.dumps(value.get("heading_path", [])),
+                value.get("content_hash"),
+                value.get("version_id"),
+                1 if value.get("is_current", True) else 0,
+                int(value.get("ordinal", 0)),
+                json.dumps(value.get("source_anchor_ids", [])),
             ),
         )
         connection.execute(
@@ -226,6 +246,12 @@ class SparseIndex:
                 "section": row["section"],
                 "page": row["page"],
                 "document_metadata": self._json_object(row["metadata_json"]),
+                "parent_chunk_id": row["parent_chunk_id"],
+                "chunk_level": row["chunk_level"],
+                "heading_path": self._json_list(row["heading_path_json"]),
+                "version_id": row["version_id"],
+                "is_current": bool(row["is_current"]),
+                "source_anchor_ids": self._json_list(row["source_anchor_ids_json"]),
             }
         )
         return SearchResult(
@@ -239,6 +265,12 @@ class SparseIndex:
             bbox_refs=self._json_boxes(row["bbox_refs_json"]),
             extraction_method=row["extraction_method"],
             min_confidence=row["min_confidence"],
+            parent_chunk_id=row["parent_chunk_id"],
+            chunk_level=row["chunk_level"] or "window",
+            heading_path=self._json_list(row["heading_path_json"]),
+            version_id=row["version_id"],
+            is_current=bool(row["is_current"]),
+            source_anchor_ids=self._json_list(row["source_anchor_ids_json"]),
             score=score,
             sparse_score=score,
             text=row["text"],
@@ -278,7 +310,15 @@ class SparseIndex:
                 element_ids_json TEXT NOT NULL,
                 bbox_refs_json TEXT NOT NULL,
                 extraction_method TEXT,
-                min_confidence REAL
+                min_confidence REAL,
+                parent_chunk_id TEXT,
+                chunk_level TEXT NOT NULL DEFAULT 'window',
+                heading_path_json TEXT NOT NULL DEFAULT '[]',
+                content_hash TEXT,
+                version_id TEXT,
+                is_current INTEGER NOT NULL DEFAULT 1,
+                ordinal INTEGER NOT NULL DEFAULT 0,
+                source_anchor_ids_json TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS sparse_chunks_document_idx
                 ON sparse_chunks(document_id);
@@ -286,6 +326,22 @@ class SparseIndex:
                 USING fts5(chunk_id UNINDEXED, title, text);
             """
         )
+        existing = {
+            row[1] for row in connection.execute("PRAGMA table_info(sparse_chunks)")
+        }
+        additions = {
+            "parent_chunk_id": "TEXT",
+            "chunk_level": "TEXT NOT NULL DEFAULT 'window'",
+            "heading_path_json": "TEXT NOT NULL DEFAULT '[]'",
+            "content_hash": "TEXT",
+            "version_id": "TEXT",
+            "is_current": "INTEGER NOT NULL DEFAULT 1",
+            "ordinal": "INTEGER NOT NULL DEFAULT 0",
+            "source_anchor_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+        }
+        for name, definition in additions.items():
+            if name not in existing:
+                connection.execute(f"ALTER TABLE sparse_chunks ADD COLUMN {name} {definition}")
 
     @staticmethod
     def _add_filter(

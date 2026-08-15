@@ -35,6 +35,28 @@ class DocumentElement(BaseModel):
     source_engine: str = "native"
     char_start: int | None = None
     char_end: int | None = None
+    parent_element_id: str | None = None
+    child_element_ids: list[str] = Field(default_factory=list)
+    table_id: str | None = None
+    row_index: int | None = None
+    column_index: int | None = None
+    row_span: int = 1
+    column_span: int = 1
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    relationships: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class DocumentTable(BaseModel):
+    """Canonical table grid retained for search and deterministic calculation."""
+
+    table_id: str
+    page_numbers: list[int] = Field(default_factory=list)
+    caption: str | None = None
+    headers: list[str] = Field(default_factory=list)
+    rows: list[list[str]] = Field(default_factory=list)
+    source_element_ids: list[str] = Field(default_factory=list)
+    confidence: float | None = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
 
 
 class StructuredPage(BaseModel):
@@ -47,19 +69,26 @@ class StructuredPage(BaseModel):
     extraction_method: str = "native"
     native_text_coverage: float = 1.0
     ocr_confidence: float | None = None
+    image_hash: str | None = None
+    quality_issues: list[dict[str, Any]] = Field(default_factory=list)
     elements: list[DocumentElement] = Field(default_factory=list)
 
 
 class StructuredDocument(BaseModel):
     """Versioned canonical representation retained alongside flattened text."""
 
-    schema_version: str = "structured-v1"
+    schema_version: str = "structured-v2"
     document_id: str | None = None
     media_type: str | None = None
     parser_version: str = "native-v1"
     language: str | None = None
     pages: list[StructuredPage] = Field(default_factory=list)
+    tables: list[DocumentTable] = Field(default_factory=list)
     extraction_issues: list[dict[str, Any]] = Field(default_factory=list)
+    source_content_hash: str | None = None
+    parser_config_hash: str | None = None
+    quality_summary: dict[str, Any] = Field(default_factory=dict)
+    relationships: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CanonicalDocument(BaseModel):
@@ -99,6 +128,14 @@ class ChunkPayload(BaseModel):
     embedding_model: str
     embedding_version: str
     index_version: str
+    parent_chunk_id: str | None = None
+    chunk_level: Literal["document", "section", "element", "table", "row", "window"] = "window"
+    heading_path: list[str] = Field(default_factory=list)
+    content_hash: str | None = None
+    version_id: str | None = None
+    is_current: bool = True
+    ordinal: int = 0
+    source_anchor_ids: list[str] = Field(default_factory=list)
 
 
 class DocumentState(BaseModel):
@@ -162,6 +199,9 @@ class RetrievalFilters(BaseModel):
     access_policies: list[str] = Field(default_factory=list)
     embedding_version: str | None = None
     index_version: str | None = None
+    version_ids: list[str] = Field(default_factory=list)
+    current_only: bool = True
+    chunk_levels: list[str] = Field(default_factory=list)
 
 
 class SearchResult(BaseModel):
@@ -186,6 +226,12 @@ class SearchResult(BaseModel):
     source_backend: str = "sparse"
     metadata: dict[str, Any] = Field(default_factory=dict)
     explain: dict[str, Any] | None = None
+    parent_chunk_id: str | None = None
+    chunk_level: str = "window"
+    heading_path: list[str] = Field(default_factory=list)
+    version_id: str | None = None
+    is_current: bool = True
+    source_anchor_ids: list[str] = Field(default_factory=list)
 
 
 class IngestionMetrics(BaseModel):
@@ -207,6 +253,26 @@ class DocumentSummary(BaseModel):
     chunk_count: int = 0
     media_type: str | None = None
     size_bytes: int | None = None
+
+
+class DocumentVersionSummary(BaseModel):
+    """Public immutable version metadata for revision-aware workflows."""
+
+    version_id: str
+    logical_document_id: str
+    document_id: str
+    predecessor_version_id: str | None = None
+    content_hash: str
+    version_label: str | None = None
+    effective_at: datetime | None = None
+    superseded_at: datetime | None = None
+    is_current: bool
+    parser_name: str
+    parser_version: str
+    schema_version: str
+    page_count: int | None = None
+    language: str | None = None
+    created_at: datetime
 
 
 class UploadResponse(BaseModel):

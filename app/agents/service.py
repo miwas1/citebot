@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
+from time import perf_counter
 from typing import Literal, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -28,7 +30,11 @@ from app.agents.schemas import (
 )
 from app.agents.session_store import ResearchSessionStore
 from app.core.config import Settings
+from app.evidence.repository import EvidenceLedgerRepository
+from app.evidence.schemas import AtomicClaim, EvidenceCandidate, VerificationDecision
+from app.evidence.service import EvidenceService
 from app.ingestion.schemas import SearchRequest, SearchResult
+from app.retrieval.query_planner import decompose_query
 from app.retrieval.service import RetrievalService
 from app.tools.citation_verifier import CitationVerifier
 from app.tools.python_sandbox import PythonSandboxTool
@@ -57,6 +63,10 @@ class ResearchAgentState(TypedDict, total=False):
     state_transitions: list[str]
     error: str
     session_turns: list[ConversationTurn]
+    atomic_claims: list[AtomicClaim]
+    evidence_candidates: dict[str, list[EvidenceCandidate]]
+    verification_decisions: list[VerificationDecision]
+    stage_timings_ms: dict[str, float]
 
 
 class ResearchAgentService:
@@ -71,6 +81,8 @@ class ResearchAgentService:
         python_sandbox: PythonSandboxTool,
         citation_verifier: CitationVerifier,
         session_store: ResearchSessionStore,
+        evidence_repository: EvidenceLedgerRepository | None = None,
+        evidence_service: EvidenceService | None = None,
     ) -> None:
         """Store dependencies and compile the research workflow graph."""
 
@@ -81,6 +93,8 @@ class ResearchAgentService:
         self._python_sandbox = python_sandbox
         self._citation_verifier = citation_verifier
         self._session_store = session_store
+        self._evidence_repository = evidence_repository
+        self._evidence_service = evidence_service or EvidenceService()
         self._graph = self._build_graph().compile()
 
     async def answer(
@@ -122,6 +136,11 @@ class ResearchAgentService:
                 stored_session.turns if stored_session else [],
             ),
         )
+        if self._evidence_repository is not None:
+            try:
+                await self._evidence_repository.save_response(response, request.query)
+            except Exception:
+                logger.exception("evidence_ledger_persist_failed trace_id=%s", trace_id)
         logger.info(
             "research_trace=%s session_id=%s transitions=%s",
             trace_id,
@@ -134,18 +153,25 @@ class ResearchAgentService:
         """Construct the LangGraph state machine for research workflows."""
 
         graph = StateGraph(ResearchAgentState)
-        graph.add_node("validate_input", self._validate_input)
-        graph.add_node("classify_query", self._classify_query)
-        graph.add_node("rewrite_query", self._rewrite_query)
-        graph.add_node("plan_retrieval", self._plan_retrieval)
-        graph.add_node("hybrid_retrieval", self._hybrid_retrieval)
-        graph.add_node("web_search", self._web_search)
-        graph.add_node("python_analysis", self._python_analysis)
-        graph.add_node("answer_generation", self._answer_generation)
-        graph.add_node("citation_verification", self._citation_verification)
-        graph.add_node("guarded_response", self._guarded_response)
-        graph.add_node("final_response_formatting", self._final_response_formatting)
-        graph.add_node("error_handler", self._error_handler)
+        nodes = {
+            "validate_input": self._validate_input,
+            "classify_query": self._classify_query,
+            "rewrite_query": self._rewrite_query,
+            "plan_retrieval": self._plan_retrieval,
+            "hybrid_retrieval": self._hybrid_retrieval,
+            "web_search": self._web_search,
+            "python_analysis": self._python_analysis,
+            "answer_generation": self._answer_generation,
+            "claim_extraction": self._claim_extraction,
+            "evidence_selection": self._evidence_selection,
+            "deterministic_verification": self._deterministic_verification,
+            "citation_verification": self._citation_verification,
+            "guarded_response": self._guarded_response,
+            "final_response_formatting": self._final_response_formatting,
+            "error_handler": self._error_handler,
+        }
+        for name, node in nodes.items():
+            graph.add_node(name, self._timed_node(name, node))
         graph.add_edge(START, "validate_input")
         graph.add_conditional_edges(
             "validate_input",
@@ -166,7 +192,10 @@ class ResearchAgentService:
             ["python_analysis", "answer_generation"],
         )
         graph.add_edge("python_analysis", "answer_generation")
-        graph.add_edge("answer_generation", "citation_verification")
+        graph.add_edge("answer_generation", "claim_extraction")
+        graph.add_edge("claim_extraction", "evidence_selection")
+        graph.add_edge("evidence_selection", "deterministic_verification")
+        graph.add_edge("deterministic_verification", "citation_verification")
         graph.add_conditional_edges(
             "citation_verification",
             self._route_after_verification,
@@ -254,6 +283,7 @@ class ResearchAgentService:
                     "top_k": request.top_k or self._settings.research_top_k,
                     "use_web_search": use_web_search,
                     "use_python": use_python,
+                    "decomposed_queries": decompose_query(state["rewritten_query"]),
                 }
             ),
             "state_transitions": _append_transition(state, "retrieval_planning"),
@@ -264,14 +294,19 @@ class ResearchAgentService:
 
         plan = state["retrieval_plan"]
         try:
-            results = await self._retrieval_service.explain(
-                SearchRequest(
-                    query=state["rewritten_query"],
-                    top_k=plan.top_k,
-                    strategy="hybrid",
-                    include_explain=True,
+            queries = plan.decomposed_queries or [state["rewritten_query"]]
+            result_batches = [
+                await self._retrieval_service.explain(
+                    SearchRequest(
+                        query=query,
+                        top_k=plan.top_k,
+                        strategy="hybrid",
+                        include_explain=True,
+                    )
                 )
-            )
+                for query in queries[:4]
+            ]
+            results = _merge_search_results(result_batches)
         except Exception as error:
             return {
                 "error": f"Retrieval failed: {error}",
@@ -390,9 +425,49 @@ class ResearchAgentService:
             state["draft_answer"],
             state.get("retrieved_contexts", []),
         )
+        verification = self._evidence_service.apply_decisions(
+            verification,
+            state.get("verification_decisions", []),
+        )
         return {
             "verification": verification,
             "state_transitions": _append_transition(state, "citation_verification"),
+        }
+
+    async def _claim_extraction(self, state: ResearchAgentState) -> ResearchAgentState:
+        """Extract atomic claims before any evidence verdict is produced."""
+
+        claims = self._evidence_service.extract(state["draft_answer"])
+        return {
+            "atomic_claims": claims,
+            "state_transitions": _append_transition(state, "claim_extraction"),
+        }
+
+    async def _evidence_selection(self, state: ResearchAgentState) -> ResearchAgentState:
+        """Select bounded candidates from the contexts already retrieved."""
+
+        candidates = self._evidence_service.select(
+            state.get("atomic_claims", []),
+            state["draft_answer"],
+            state.get("retrieved_contexts", []),
+        )
+        return {
+            "evidence_candidates": candidates,
+            "state_transitions": _append_transition(state, "evidence_selection"),
+        }
+
+    async def _deterministic_verification(
+        self, state: ResearchAgentState
+    ) -> ResearchAgentState:
+        """Run low-cost deterministic checks before optional NLI verification."""
+
+        decisions = self._evidence_service.verify(
+            state.get("atomic_claims", []),
+            state.get("evidence_candidates", {}),
+        )
+        return {
+            "verification_decisions": decisions,
+            "state_transitions": _append_transition(state, "deterministic_verification"),
         }
 
     async def _guarded_response(self, state: ResearchAgentState) -> ResearchAgentState:
@@ -400,24 +475,12 @@ class ResearchAgentService:
 
         answer = state["draft_answer"]
         verification = state["verification"]
-        supported_citations = {
-            claim.citation_id
-            for claim in verification.claims
-            if claim.verdict in {"supported", "partially_supported"}
-        }
-        filtered_citations = [
-            citation
-            for citation in answer.citations
-            if citation.citation_id in supported_citations
-        ]
-        guarded_answer = answer.model_copy(
+        guarded_answer = self._evidence_service.refiner.refine(
+            answer,
+            verification.claims,
+            state["query"],
+        ).model_copy(
             update={
-                "direct_answer": (
-                    answer.direct_answer
-                    if filtered_citations
-                    else build_guarded_answer(state["query"])
-                ),
-                "citations": filtered_citations,
                 "limitations": (
                     "Verification found unsupported or weakly supported claims. "
                     f"Overall verdict: {verification.overall_verdict}."
@@ -440,6 +503,11 @@ class ResearchAgentService:
         """Assemble the final API response and the persisted session turn history."""
 
         answer = state["draft_answer"]
+        verification = state["verification"]
+        if verification.overall_verdict == "supported":
+            answer = answer.model_copy(update={"answer_status": "supported"})
+        elif answer.answer_status == "draft":
+            answer = answer.model_copy(update={"answer_status": "qualified"})
         user_turn = ConversationTurn(
             role="user",
             content=state["query"],
@@ -466,12 +534,17 @@ class ResearchAgentService:
             session_id=state["session_id"],
             trace_id=state["trace_id"],
             answer=answer,
-            verification=state["verification"],
+            verification=verification,
             memory=memory,
             tool_calls=state.get("tool_calls", []),
             token_usage=state.get("token_usage", {}),
             state_transitions=_append_transition(state, "final_response_formatting"),
             retrieved_contexts=state.get("retrieved_contexts", []),
+            claims=verification.claims,
+            evidence_coverage=verification.evidence_coverage,
+            contradiction_count=verification.contradiction_count,
+            verification_version=verification.verification_version,
+            stage_timings_ms=state.get("stage_timings_ms", {}),
         )
         return {
             "memory": memory,
@@ -489,13 +562,14 @@ class ResearchAgentService:
             error_message=state.get("error", "Unhandled research agent error."),
             memory=state.get("memory", ResearchMemory()),
             state_transitions=_append_transition(state, "error_handler"),
+            stage_timings_ms=state.get("stage_timings_ms", {}),
         )
         return {
             "final_response": response,
             "state_transitions": response.state_transitions,
         }
 
-    def _route_after_validation(
+    async def _route_after_validation(
         self,
         state: ResearchAgentState,
     ) -> Literal["classify_query", "error_handler"]:
@@ -503,7 +577,7 @@ class ResearchAgentService:
 
         return "error_handler" if state.get("error") else "classify_query"
 
-    def _route_after_retrieval(
+    async def _route_after_retrieval(
         self,
         state: ResearchAgentState,
     ) -> Literal["web_search", "python_analysis", "answer_generation", "error_handler"]:
@@ -518,7 +592,7 @@ class ResearchAgentService:
             return "python_analysis"
         return "answer_generation"
 
-    def _route_after_web_search(
+    async def _route_after_web_search(
         self,
         state: ResearchAgentState,
     ) -> Literal["python_analysis", "answer_generation"]:
@@ -530,7 +604,7 @@ class ResearchAgentService:
             else "answer_generation"
         )
 
-    def _route_after_verification(
+    async def _route_after_verification(
         self,
         state: ResearchAgentState,
     ) -> Literal["guarded_response", "final_response_formatting"]:
@@ -585,6 +659,7 @@ class ResearchAgentService:
         error_message: str,
         memory: ResearchMemory,
         state_transitions: list[str],
+        stage_timings_ms: dict[str, float] | None = None,
     ) -> ResearchResponse:
         """Construct a controlled failure payload for API consumers."""
 
@@ -599,8 +674,32 @@ class ResearchAgentService:
             memory=memory,
             token_usage={},
             state_transitions=state_transitions,
+            stage_timings_ms=stage_timings_ms or {},
             error=error_message,
         )
+
+    def _timed_node(
+        self,
+        name: str,
+        node: Callable[[ResearchAgentState], Awaitable[ResearchAgentState]],
+    ) -> Callable[[ResearchAgentState], Awaitable[ResearchAgentState]]:
+        """Wrap one graph node with bounded stage timing telemetry."""
+
+        async def run(state: ResearchAgentState) -> ResearchAgentState:
+            started = perf_counter()
+            result = await node(state)
+            timings = dict(state.get("stage_timings_ms", {}))
+            timings.update(result.get("stage_timings_ms", {}))
+            timings[name] = round((perf_counter() - started) * 1000, 3)
+            result["stage_timings_ms"] = timings
+            final_response = result.get("final_response")
+            if final_response is not None:
+                result["final_response"] = final_response.model_copy(
+                    update={"stage_timings_ms": timings}
+                )
+            return result
+
+        return run
 
 
 def _append_transition(state: ResearchAgentState, name: str) -> list[str]:
@@ -619,3 +718,15 @@ def _with_token_usage(
     token_usage = dict(state.get("token_usage", {}))
     token_usage[stage] = sum(estimate_token_count(text) for text in texts if text)
     return token_usage
+
+
+def _merge_search_results(result_batches: list[list[SearchResult]]) -> list[SearchResult]:
+    """Merge decomposed-query results by best score without duplicating chunks."""
+
+    merged: dict[str, SearchResult] = {}
+    for batch in result_batches:
+        for result in batch:
+            existing = merged.get(result.chunk_id)
+            if existing is None or result.score > existing.score:
+                merged[result.chunk_id] = result
+    return sorted(merged.values(), key=lambda result: result.score, reverse=True)

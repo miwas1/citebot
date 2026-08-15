@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "citebot://workflow/evidence_answer/v1",
+  "title": "CiteBot evidence answer",
+  "type": "object",
+  "required": ["answer", "claims", "evidence_coverage", "verification_version"],
+  "properties": {
+    "answer": {"type": "string"},
+    "claims": {"type": "array", "items": {"type": "object"}},
+    "evidence_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+    "verification_version": {"type": "string"}
+  }
+}

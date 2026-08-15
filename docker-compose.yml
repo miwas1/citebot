@@ -3,6 +3,7 @@ x-citebot-environment: &citebot-environment
   DATABASE_URL: sqlite+aiosqlite:////data/citebot.db
   QDRANT_URL: http://qdrant:6333
   INGESTION_EXECUTION_MODE: queued
+  INGESTION_MAX_DOCUMENTS: "600"
   ALLOW_LOCAL_DENSE_FALLBACK: "false"
   OBJECT_STORAGE_PATH: /data/raw_documents
   STRUCTURED_DOCUMENT_PATH: /data/structured_documents
@@ -11,6 +12,8 @@ x-citebot-environment: &citebot-environment
   LLM_BASE_URL: http://llm:8082/v1
   MODEL_MANIFEST_PATH: /models/manifest.lock.json
   OCR_MODEL_PATH: /models/paddleocr
+  SAMPLE_CORPUS_PATH: /app/data/sample_corpus
+  SAMPLE_CORPUS_AUTO_INGEST: "true"
 
 services:
   api:

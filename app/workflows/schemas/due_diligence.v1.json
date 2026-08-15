@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "citebot://workflow/due_diligence/v1",
+  "title": "CiteBot due diligence register",
+  "allOf": [{"$ref": "contract_review.v1.json"}],
+  "properties": {"workflow_id": {"const": "due_diligence"}}
+}

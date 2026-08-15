@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.db.base import Base
+from app.db.migrations import run_migrations
 
 
 class DatabaseSessionManager:
@@ -34,6 +35,7 @@ class DatabaseSessionManager:
                     f"PRAGMA busy_timeout={self._sqlite_busy_timeout_ms}"
                 )
                 await connection.run_sync(self._ensure_sqlite_columns)
+            await connection.run_sync(run_migrations)
 
     def _ensure_sqlite_columns(self, connection) -> None:
         """Apply additive columns for installations created before structured data."""
@@ -44,6 +46,14 @@ class DatabaseSessionManager:
                 "bbox_refs": "JSON",
                 "extraction_method": "VARCHAR(64)",
                 "min_confidence": "FLOAT",
+                "parent_chunk_id": "VARCHAR(64)",
+                "chunk_level": "VARCHAR(32) DEFAULT 'window'",
+                "heading_path": "JSON",
+                "content_hash": "VARCHAR(64)",
+                "version_id": "VARCHAR(64)",
+                "is_current": "BOOLEAN DEFAULT 1",
+                "ordinal": "INTEGER DEFAULT 0",
+                "source_anchor_ids": "JSON",
             },
             "ingestion_jobs": {
                 "attempt_count": "INTEGER DEFAULT 0",

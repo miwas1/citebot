@@ -21,6 +21,7 @@ class DocumentNormalizer:
         structured = self._align_structured(document.structured, normalized_text)
         if structured is not None:
             structured.document_id = str(uuid5(NAMESPACE_URL, document.source_uri))
+            structured.source_content_hash = content_hash
         return CanonicalDocument(
             document_id=str(uuid5(NAMESPACE_URL, document.source_uri)),
             source_uri=document.source_uri,

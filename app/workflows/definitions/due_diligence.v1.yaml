@@ -1,0 +1,10 @@
+workflow_id: due_diligence
+version: v1
+review_policy: always_review
+required_fields:
+  - finding
+  - category
+  - impact
+  - evidence
+  - missing_information
+prohibited_use: investment advice

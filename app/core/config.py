@@ -77,7 +77,7 @@ class Settings(BaseSettings):
     ocr_concurrency: int = Field(default=1, alias="OCR_CONCURRENCY")
     max_input_bytes: int = Field(default=25 * 1024 * 1024, alias="MAX_INPUT_BYTES")
     ingestion_max_documents: int = Field(
-        default=500,
+        default=600,
         alias="INGESTION_MAX_DOCUMENTS",
     )
     ingestion_max_source_bytes: int = Field(
@@ -91,6 +91,14 @@ class Settings(BaseSettings):
     queue_lease_seconds: int = Field(default=300, alias="QUEUE_LEASE_SECONDS")
     queue_poll_seconds: float = Field(default=1.0, alias="QUEUE_POLL_SECONDS")
     ingestion_max_attempts: int = Field(default=3, alias="INGESTION_MAX_ATTEMPTS")
+    sample_corpus_path: Path = Field(
+        default=Path("./data/sample_corpus"),
+        alias="SAMPLE_CORPUS_PATH",
+    )
+    sample_corpus_auto_ingest: bool = Field(
+        default=True,
+        alias="SAMPLE_CORPUS_AUTO_INGEST",
+    )
     embedding_provider: str = Field(default="local-http", alias="EMBEDDING_PROVIDER")
     embedding_model: str = Field(
         default="BAAI/bge-small-en-v1.5", alias="EMBEDDING_MODEL"
@@ -141,6 +149,13 @@ class Settings(BaseSettings):
         default=8,
         alias="RERANKER_CANDIDATE_COUNT",
     )
+    verification_provider: str = Field(
+        default="deterministic", alias="VERIFICATION_PROVIDER"
+    )
+    verification_model: str = Field(
+        default="cross-encoder/nli-MiniLM2-L6-H768", alias="VERIFICATION_MODEL"
+    )
+    verification_max_pairs: int = Field(default=32, alias="VERIFICATION_MAX_PAIRS")
     answer_provider: str = Field(default="llama-cpp", alias="ANSWER_PROVIDER")
     answer_model: str = Field(
         default="phi-4-mini-instruct-q4", alias="ANSWER_MODEL"
@@ -298,8 +313,8 @@ class Settings(BaseSettings):
         if self.vector_backend not in {"qdrant", "local", "pgvector"}:
             msg = "VECTOR_BACKEND must be one of qdrant, local, or pgvector"
             raise ValueError(msg)
-        if self.document_parser not in {"auto", "native", "ocr"}:
-            msg = "DOCUMENT_PARSER must be one of auto, native, or ocr"
+        if self.document_parser not in {"auto", "native", "ocr", "docling", "ppstructure"}:
+            msg = "DOCUMENT_PARSER must be one of auto, native, ocr, docling, or ppstructure"
             raise ValueError(msg)
         if self.ocr_provider not in {"paddleocr", "none"}:
             msg = "OCR_PROVIDER must be one of paddleocr or none"
@@ -408,6 +423,12 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         if self.reranker_candidate_count <= 0:
             msg = "RERANKER_CANDIDATE_COUNT must be positive"
+            raise ValueError(msg)
+        if self.verification_provider not in {"deterministic", "sentence-transformers"}:
+            msg = "VERIFICATION_PROVIDER must be deterministic or sentence-transformers"
+            raise ValueError(msg)
+        if self.verification_max_pairs <= 0:
+            msg = "VERIFICATION_MAX_PAIRS must be positive"
             raise ValueError(msg)
         if self.answer_provider not in {
             "llama-cpp",

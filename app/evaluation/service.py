@@ -125,7 +125,7 @@ class EvaluationService:
             )
         )
         metrics = compute_case_metrics(case, response)
-        threshold_failures = self._build_case_threshold_failures(metrics)
+        threshold_failures = self._build_case_threshold_failures(case, metrics)
         return EvaluationCaseResult(
             eval_case_id=case.eval_case_id,
             session_id=session_id,
@@ -144,6 +144,15 @@ class EvaluationService:
             citation_chunk_ids=[
                 citation.chunk_id for citation in response.answer.citations
             ],
+            claim_verdicts=[
+                claim.verdict for claim in (response.claims or response.verification.claims)
+            ],
+            citation_anchor_ids=[
+                anchor_id
+                for citation in response.answer.citations
+                for anchor_id in citation.source_anchor_ids
+            ],
+            answer_status=response.answer.answer_status,
             metrics=metrics,
             threshold_failures=threshold_failures,
             passed=not threshold_failures,
@@ -293,7 +302,11 @@ class EvaluationService:
             evaluator_model=evaluator_binding.model,
         )
 
-    def _build_case_threshold_failures(self, metrics: dict[str, float]) -> list[str]:
+    def _build_case_threshold_failures(
+        self,
+        case: EvaluationCase,
+        metrics: dict[str, float],
+    ) -> list[str]:
         """Return threshold failures for a single evaluation case."""
 
         failures: list[str] = []
@@ -325,6 +338,24 @@ class EvaluationService:
             < self._settings.evaluation_answer_relevance_threshold
         ):
             failures.append("trait_coverage")
+        if case.expected_claim_verdicts and metrics.get("claim_verdict_recall", 0.0) < 1.0:
+            failures.append("claim_verdict_recall")
+        if case.requires_abstention and metrics.get("abstention_compliance", 0.0) < 1.0:
+            failures.append("abstention_compliance")
+        if case.requires_review and metrics.get("review_requirement_compliance", 0.0) < 1.0:
+            failures.append("review_requirement_compliance")
+        if case.expected_anchor_ids and metrics.get("expected_anchor_recall", 0.0) < 1.0:
+            failures.append("expected_anchor_recall")
+        if metrics.get("citation_anchor_validity", 1.0) < 1.0:
+            failures.append("citation_anchor_validity")
+        if metrics.get("false_supported_rate", 0.0) > 0.02:
+            failures.append("false_supported_rate")
+        if (
+            case.expected_claim_verdicts
+            and any(value == "contradicted" for value in case.expected_claim_verdicts.values())
+            and metrics.get("contradiction_recall", 0.0) < 0.90
+        ):
+            failures.append("critical_contradiction_recall")
         return failures
 
     def _build_run_threshold_failures(
@@ -360,6 +391,10 @@ class EvaluationService:
             < self._settings.evaluation_context_precision_threshold
         ):
             failures.append("summary:context_precision")
+        if summary_metrics.get("citation_anchor_validity", 1.0) < 1.0:
+            failures.append("summary:citation_anchor_validity")
+        if summary_metrics.get("false_supported_rate", 0.0) > 0.02:
+            failures.append("summary:false_supported_rate")
         if ragas.status == "completed":
             if (
                 ragas.scores.get("faithfulness", 1.0)
