@@ -42,14 +42,14 @@
         <div class="docs-section-index">01</div>
         <div>
           <h3>First run</h3>
-          <p>On the first offline startup, CiteBot automatically queues the bundled sample corpus. It appears in Documents while the worker processes it, then becomes available for search.</p>
+          <p>On the first offline startup, CiteBot creates the bundled <strong>Sample Project</strong> and queues its corpus. The project appears while the worker processes it, then becomes available for search.</p>
           <div class="docs-command"><span>$</span><code>make local-setup</code></div>
           <p class="docs-note">Startup is idempotent: an existing queued, running, or completed bootstrap job is not duplicated.</p>
           <ol class="docs-steps">
             <li>Provision the local models and start the stack.</li>
             <li>Open the workspace at <code>http://127.0.0.1/</code>.</li>
-            <li>Wait for the sample documents to show <strong>Ready</strong>.</li>
-            <li>Ask a question about the sample research papers.</li>
+            <li>Wait for the Sample Project to show <strong>Ready to query</strong>.</li>
+            <li>Select a project before uploading or asking a question.</li>
           </ol>
         </div>
       </section>
@@ -71,9 +71,9 @@
         <div class="docs-section-index">03</div>
         <div>
           <h3>Documents &amp; versions</h3>
-          <p>Open Documents to upload PDF, Word, text, Markdown, JSON, JSONL, or image sources. In queued mode, the document worker processes uploads without blocking the API.</p>
+          <p>Select a project before uploading PDF, Word, text, Markdown, JSON, JSONL, or image sources. In queued mode, the document worker processes uploads without blocking the API.</p>
           <p>Each re-upload can become an immutable version with source anchors, structured extraction metadata, and current-version filtering. The backend also supports exact diffs between versions for change reports.</p>
-          <div class="docs-endpoints"><code>GET /api/v1/documents</code><code>GET /api/v1/documents/{id}/versions</code></div>
+          <div class="docs-endpoints"><code>GET /api/v1/projects/{project_id}/documents</code><code>GET /api/v1/projects/{project_id}/documents/{id}/versions</code></div>
         </div>
       </section>
 

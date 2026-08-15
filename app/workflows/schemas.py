@@ -84,6 +84,7 @@ class WorkflowRunRequest(BaseModel):
     """Request to turn a grounded research run into a work product."""
 
     workflow_id: str
+    project_id: str = "sample-project"
     query: str = Field(min_length=1, max_length=2000)
     session_id: str | None = None
     top_k: int = Field(default=5, ge=1, le=20)

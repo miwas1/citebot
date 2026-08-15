@@ -20,6 +20,7 @@ from app.workflows.schemas import (
 )
 
 router = APIRouter(prefix="/workflows")
+project_router = APIRouter(prefix="/projects")
 ContainerDependency = Annotated[ServiceContainer, Depends(get_container)]
 ResearchAccessDependency = Annotated[None, Depends(require_research_access)]
 
@@ -45,6 +46,7 @@ async def run_workflow(
         response = await container.research_agent_service.answer(
             ResearchQueryRequest(
                 session_id=request.session_id,
+                project_id="sample-project",
                 query=request.query,
                 top_k=request.top_k,
                 allow_python_execution=request.allow_python_execution,
@@ -64,6 +66,38 @@ async def run_workflow(
         product=product,
         research=response.model_dump(mode="json"),
     )
+
+
+@project_router.post("/{project_id}/workflows/run", response_model=WorkflowRunResponse)
+async def run_project_workflow(
+    project_id: str,
+    request: WorkflowRunRequest,
+    container: ContainerDependency,
+    _: ResearchAccessDependency,
+) -> WorkflowRunResponse:
+    """Run a reviewable workflow against one project's corpus."""
+
+    await container.project_service.require(project_id, writable=True)
+    try:
+        response = await container.research_agent_service.answer(
+            ResearchQueryRequest(
+                session_id=request.session_id,
+                project_id=project_id,
+                query=request.query,
+                top_k=request.top_k,
+                allow_python_execution=request.allow_python_execution,
+            )
+        )
+        product = container.workflow_service.build_product(request.workflow_id, response)
+        await container.workflow_repository.save(product)
+        if product.status == "needs_review":
+            try:
+                await container.review_gate.start(product)
+            except GraphInterrupt:
+                pass
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return WorkflowRunResponse(product=product, research=response.model_dump(mode="json"))
 
 
 @router.get("/reviews/pending")

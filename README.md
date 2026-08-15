@@ -2,10 +2,21 @@
 
 CiteBot is a privacy-first document RAG system for local, offline operation. The default deployment keeps documents, OCR, embeddings, generation, vectors, sessions, and evaluation on one machine; hosted providers and web search are compatibility-only development paths and are rejected by offline production mode.
 
+## Current stage
+
+CiteBot is a working local beta for a trusted deployment. Project-scoped
+documents, retrieval, cited research, conversations, evidence, and workflow
+execution are implemented. The first offline startup is automated: it creates
+and populates the Sample Project, then exposes its readiness in the workspace.
+Projects provide corpus isolation, but per-user accounts, invitations, and
+project-level permissions are not implemented yet. Upgrades retain pre-project
+records in an **Imported Documents** workspace.
+
 ---
 
 ## Table of Contents
 
+- [Current stage](#current-stage)
 - [Local Setup](#local-setup)
 - [Quick Start (Docker)](#quick-start-docker)
 - [Web Workspace](#web-workspace)
@@ -58,6 +69,7 @@ The example file is configured for an offline local run. Copy it before starting
 | `RUNTIME_MODE` | `offline` fail-closed runtime policy | `offline` |
 | `EMBEDDING_PROVIDER` | `local-http` (real local service) or `local`/`test` (deterministic tests) | `local-http` |
 | `EMBEDDING_MODEL` | Local embedding artifact | `BAAI/bge-small-en-v1.5` |
+| `EMBEDDING_SERVED_MODEL_NAME` | OpenAI-compatible alias advertised by local TEI | `BAAI/bge-small-en-v1.5` |
 | `EMBEDDING_BASE_URL` | Private embedding service URL | `http://embedding:8081` |
 | `EMBEDDING_DIMENSION` | Must match the local model artifact | `384` |
 | `ANSWER_PROVIDER` | `llama-cpp` or `local`/`test` (deterministic tests) | `llama-cpp` |
@@ -74,24 +86,21 @@ The example file is configured for an offline local run. Copy it before starting
 
 ### 3. Provision model artifacts and start the offline stack
 
-Run the one-time bootstrap command below. It downloads the default BGE embedding
-model, Phi-4-mini GGUF, and PaddleOCR detection/recognition models to the local
-artifact directory, records their exact upstream commits and checksums in
-`manifest.lock.json`, builds/pulls the required containers, and starts the stack.
-Set the `*_REPOSITORY`, `*_REVISION`, `LLM_MODEL_FILENAME`, or
-`MODEL_ARTIFACT_ROOT` values in `.env` before running it to override a default.
-The runtime never downloads models after this command succeeds.
+Start the stack with the command below. Compose automatically provisions the
+configured local model artifacts, verifies their lock manifest, builds/pulls
+the required containers, and starts the offline services. Set the
+`*_REPOSITORY`, `*_REVISION`, `LLM_MODEL_FILENAME`, or `MODEL_ARTIFACT_ROOT`
+values in `.env` before running it to override a default.
 
 ```bash
 make local-setup
 ```
 
-On the first offline startup, CiteBot automatically queues the bundled
-`data/sample_corpus` for ingestion. The sample corpus is included so a new
-installation has something to search while the document worker processes it.
-This bootstrap is idempotent: queued, running, and completed sample jobs are
-not duplicated. Set `SAMPLE_CORPUS_AUTO_INGEST=false` if you want an empty
-workspace instead.
+On the first offline startup, CiteBot automatically creates the **Sample
+Project** and queues the bundled `data/sample_corpus`. The job is idempotent;
+the project is shown in the workspace as **Preparing** and becomes **Ready to
+query** when indexing completes. No manual sample upload or ingestion step is
+required.
 
 Services started:
 
@@ -128,19 +137,21 @@ For fast tests without model services, set `EMBEDDING_PROVIDER=local`, `ANSWER_P
 
 ```bash
 make dev-up          # start all services
-make ingest-sample   # manually re-run the bundled sample corpus ingestion
-make search-sample   # run a test search
 make test            # run the test suite
 make dev-logs        # follow API and document-worker logs
 make dev-down        # stop containers and preserve volumes
 make dev-reset       # stop containers and delete volumes
 ```
 
+The sample project is populated automatically at startup and is ready to query
+once its ingestion job completes.
+
 ## Web Workspace
 
 Open `http://127.0.0.1/` after the stack is ready. The integrated workspace
 provides:
 
+- reusable projects that keep each team's document context focused;
 - drag-and-drop uploads for PDF, DOCX, text, Markdown, JSON/JSONL, and images;
 - live queued/processing/ready status and a searchable document library;
 - streaming research conversations with durable history;
@@ -150,6 +161,24 @@ provides:
 The **Guide** link in the dashboard opens the in-app operator documentation at
 `/docs.html`. It covers first-run setup, asking the library, document versions,
 workflow review, and local operations.
+
+Documents and research are project-scoped:
+
+```text
+GET  /api/v1/projects
+POST /api/v1/projects
+POST /api/v1/projects/{project_id}/documents/uploads?filename=<name>
+POST /api/v1/projects/{project_id}/search
+POST /api/v1/projects/{project_id}/research/query
+POST /api/v1/projects/{project_id}/research/query/stream
+```
+
+Every upload, search, conversation, workflow, and evidence lookup is scoped to
+the selected project. The bundled **Sample Project** is created and populated
+automatically on first offline startup; newly created projects start empty and
+become **Ready to query** after their first successful ingestion.
+There is no global document library: choose or create a project before adding
+sources or asking project-specific questions.
 
 When `RESEARCH_API_KEY` or `ADMIN_API_KEY` is configured, open the gear menu in
 the workspace and enter both values. Keys are retained in that browser's local
@@ -345,24 +374,19 @@ Metrics reported:
 
 ## Ingest a Corpus
 
-Ingest the bundled sample corpus:
+The bundled sample corpus is ingested automatically. To ingest another corpus,
+target a project explicitly (the CLI defaults to `sample-project`):
 
 ```bash
-python -m app.ingestion.cli ingest data/sample_corpus
-```
-
-Ingest a downloaded research corpus:
-
-```bash
-python -m app.ingestion.cli ingest data/corpus/interpretability/interpretability_merged.jsonl
-# or via Make:
-make ingest-interpretability
+python -m app.ingestion.cli ingest data/corpus/interpretability/interpretability_merged.jsonl \
+    --project-id <project_id>
 ```
 
 Search after ingestion:
 
 ```bash
-python -m app.ingestion.cli search "citation traceability" --top-k 3 --strategy hybrid --include-explain
+python -m app.ingestion.cli search "citation traceability" \
+    --project-id <project_id> --top-k 3 --strategy hybrid --include-explain
 ```
 
 Search flags:
@@ -380,20 +404,31 @@ Search flags:
 - `GET /api/v1/health`
 - `GET /api/v1/ready`
 - `GET /api/v1/version`
-- `POST /api/v1/admin/ingestion/jobs`
+- `GET /api/v1/projects`
+- `POST /api/v1/projects`
+- `GET /api/v1/projects/{project_id}`
+- `PATCH /api/v1/projects/{project_id}`
+- `DELETE /api/v1/projects/{project_id}` (archives the project)
+- `GET /api/v1/projects/{project_id}/documents`
+- `POST /api/v1/projects/{project_id}/documents/uploads?filename=<name>`
+- `GET /api/v1/projects/{project_id}/documents/jobs`
+- `GET /api/v1/projects/{project_id}/documents/{document_id}/versions`
+- `POST /api/v1/projects/{project_id}/search`
+- `GET /api/v1/projects/{project_id}/conversations`
+- `GET /api/v1/projects/{project_id}/conversations/{session_id}`
+- `DELETE /api/v1/projects/{project_id}/conversations/{session_id}`
+- `POST /api/v1/projects/{project_id}/research/query`
+- `POST /api/v1/projects/{project_id}/research/query/stream`
+- `POST /api/v1/projects/{project_id}/workflows/run`
+- `POST /api/v1/admin/ingestion/jobs` (server-side corpus ingestion)
 - `GET /api/v1/admin/ingestion/jobs/{job_id}`
-- `POST /api/v1/admin/ingestion/search`
 - `GET /api/v1/admin/ingestion/metrics`
-- `GET /api/v1/documents`
-- `GET /api/v1/documents/jobs`
-- `POST /api/v1/documents/uploads?filename=<name>`
-- `GET /api/v1/conversations`
-- `GET /api/v1/conversations/{session_id}`
-- `DELETE /api/v1/conversations/{session_id}`
 - `POST /api/v1/admin/evaluation/runs`
 - `GET /api/v1/admin/evaluation/runs/{run_id}`
 
-The admin search endpoint accepts dense, sparse, and hybrid retrieval requests and can return per-result explain payloads showing backend choice, fallback decisions, fusion metadata, and reranker scores.
+All project search and research requests are isolated to the project in the URL.
+The admin ingestion endpoint accepts a `project_id` in its request body and
+can run in foreground or queued mode.
 
 ---
 
@@ -401,14 +436,15 @@ The admin search endpoint accepts dense, sparse, and hybrid retrieval requests a
 
 The repository includes a LangGraph-backed research workflow for grounded local answer generation and citation verification. Web enrichment remains disabled in offline mode; the Python sandbox is separately opt-in.
 
-- `POST /api/v1/research/query`
-- `POST /api/v1/research/query/stream`
+- `POST /api/v1/projects/{project_id}/research/query`
+- `POST /api/v1/projects/{project_id}/research/query/stream`
 
 Example request:
 
 ```json
 {
 	"session_id": "session-1",
+	"project_id": "<project_id>",
 	"query": "How does citation traceability work in CiteBot?",
 	"top_k": 3,
 	"allow_web_search": false,

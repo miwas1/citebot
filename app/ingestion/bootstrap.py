@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.ingestion.repository import IngestionRepository
 from app.ingestion.schemas import JobStatusResponse
 from app.ingestion.service import IngestionService
+from app.projects.service import SAMPLE_PROJECT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -42,18 +43,29 @@ async def ensure_sample_corpus(
         if not acquired:
             logger.info("sample_corpus_bootstrap_in_progress")
             return None
-        if await repository.has_active_or_completed_job(str(source_path.resolve())):
+        try:
+            already_scheduled = await repository.has_active_or_completed_job(
+                str(source_path.resolve()), SAMPLE_PROJECT_ID
+            )
+        except TypeError:
+            # Compatibility with small test/dry-run repository adapters.
+            already_scheduled = await repository.has_active_or_completed_job(
+                str(source_path.resolve())
+            )
+        if already_scheduled:
             logger.info("sample_corpus_bootstrap_already_scheduled path=%s", source_path)
             return None
         if settings.ingestion_execution_mode == "queued":
             job = await ingestion_service.enqueue_path(
                 source_path,
+                project_id=SAMPLE_PROJECT_ID,
                 embedding_version=settings.embedding_version,
                 index_version="v2",
             )
         else:
             job = await ingestion_service.ingest_path(
                 source_path,
+                project_id=SAMPLE_PROJECT_ID,
                 embedding_version=settings.embedding_version,
                 index_version="v2",
             )

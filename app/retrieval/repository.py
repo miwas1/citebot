@@ -18,6 +18,7 @@ class IndexedChunkRecord:
 
     chunk_id: str
     document_id: str
+    project_id: str
     title: str
     source_uri: str
     location_marker: str | None
@@ -58,6 +59,7 @@ class RetrievalRepository:
 
         statement = select(ChunkRecord, DocumentRecord).join(DocumentRecord)
         if filters is not None:
+            statement = statement.where(DocumentRecord.project_id == filters.project_id)
             if filters.document_ids:
                 statement = statement.where(
                     ChunkRecord.document_id.in_(filters.document_ids)
@@ -100,6 +102,7 @@ class RetrievalRepository:
         return IndexedChunkRecord(
             chunk_id=chunk.chunk_id,
             document_id=chunk.document_id,
+            project_id=document.project_id or "sample-project",
             title=document.title,
             source_uri=document.source_uri,
             location_marker=chunk.location_marker,

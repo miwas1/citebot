@@ -8,7 +8,7 @@ CORPUS_MERGED      ?= $(CORPUS_OUTPUT_DIR)/interpretability_merged.jsonl
 EVAL_DATASET       ?= data/evaluation_datasets/interpretability_scenario.json
 EVAL_OUTPUT        ?= artifacts/evaluations/interpretability_scenario_result.json
 
-.PHONY: dev-up dev-logs dev-down dev-reset local-setup test lint ingest-sample search-sample benchmark-retrieval benchmark-16gb integration-retrieval eval-smoke eval-ci models-provision models-verify \
+.PHONY: dev-up dev-logs dev-down dev-reset local-setup test lint benchmark-retrieval benchmark-16gb integration-retrieval eval-smoke eval-ci models-provision models-verify \
         corpus-download corpus-download-large corpus-download-full \
         ingest-interpretability eval-interpretability eval-interpretability-ragas \
         corpus-stats
@@ -41,12 +41,6 @@ models-verify:
 ## models-provision: download local inference/OCR artifacts and generate their lock manifest
 models-provision:
 	$(PYTHON) scripts/provision_local_models.py
-
-ingest-sample:
-	$(PYTHON) -m app.ingestion.cli ingest data/sample_corpus
-
-search-sample:
-	$(PYTHON) -m app.ingestion.cli search "citation traceability" --top-k 3
 
 benchmark-retrieval:
 	$(PYTHON) -m app.evaluation.retrieval_harness benchmark --start-compose

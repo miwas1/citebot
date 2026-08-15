@@ -33,6 +33,9 @@ from app.ingestion.repository import IngestionRepository
 from app.ingestion.service import IngestionService
 from app.ingestion.sparse_index import SparseIndex
 from app.ingestion.vector_writers import PgVectorWriter, QdrantWriter
+from app.observability.metrics import InMemoryMetricsRegistry
+from app.projects.repository import ProjectRepository
+from app.projects.service import ProjectService
 from app.retrieval.repository import RetrievalRepository
 from app.retrieval.reranker import build_reranker
 from app.retrieval.service import RetrievalService
@@ -53,6 +56,8 @@ class ServiceContainer:
     session_manager: DatabaseSessionManager
     health_service: HealthService
     ingestion_repository: IngestionRepository
+    project_repository: ProjectRepository
+    project_service: ProjectService
     ingestion_service: IngestionService
     retrieval_service: RetrievalService
     research_agent_service: ResearchAgentService
@@ -74,6 +79,7 @@ class ServiceContainer:
         if self.settings.runtime_mode == "offline":
             verify_model_manifest(self.settings.model_manifest_path)
         await self.session_manager.initialize()
+        await self.project_service.ensure_sample_project()
         await self.ingestion_service.initialize()
         await ensure_sample_corpus(
             self.settings,
@@ -87,7 +93,10 @@ class ServiceContainer:
         await self.session_manager.close()
 
 
-def build_container(settings: Settings) -> ServiceContainer:
+def build_container(
+    settings: Settings,
+    metrics_registry: InMemoryMetricsRegistry | None = None,
+) -> ServiceContainer:
     """Construct the service graph for the current process."""
 
     session_manager = DatabaseSessionManager(
@@ -95,6 +104,8 @@ def build_container(settings: Settings) -> ServiceContainer:
         sqlite_busy_timeout_ms=settings.sqlite_busy_timeout_ms,
     )
     repository = IngestionRepository(session_manager)
+    project_repository = ProjectRepository(session_manager)
+    project_service = ProjectService(project_repository)
     loader = LocalCorpusLoader(settings)
     normalizer = DocumentNormalizer()
     chunker = SlidingWindowChunker(settings.chunk_size, settings.chunk_overlap)
@@ -113,7 +124,7 @@ def build_container(settings: Settings) -> ServiceContainer:
     )
     retrieval_repository = RetrievalRepository(session_manager)
     reranker = build_reranker(settings)
-    answer_generator = build_answer_generator(settings)
+    answer_generator = build_answer_generator(settings, metrics_registry=metrics_registry)
     web_search_tool = build_web_search_tool(settings)
     python_sandbox = PythonSandboxTool(settings)
     nli_verifier = (
@@ -177,6 +188,8 @@ def build_container(settings: Settings) -> ServiceContainer:
         session_manager=session_manager,
         health_service=health_service,
         ingestion_repository=repository,
+        project_repository=project_repository,
+        project_service=project_service,
         ingestion_service=ingestion_service,
         retrieval_service=retrieval_service,
         research_agent_service=research_agent_service,
@@ -203,7 +216,10 @@ async def lifespan(application: FastAPI):
     """Initialize the service container for the FastAPI application lifespan."""
 
     settings = get_settings()
-    container = build_container(settings)
+    container = build_container(
+        settings,
+        metrics_registry=getattr(application.state, "metrics_registry", None),
+    )
     await container.initialize()
     application.state.container = container
     try:

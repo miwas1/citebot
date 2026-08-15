@@ -15,6 +15,7 @@ from app.core.lifecycle import build_container
 from app.core.model_manifest import verify_model_manifest
 from app.ingestion.embedder import LocalHttpEmbedder
 from app.ingestion.loaders import LocalCorpusLoader
+from app.observability.metrics import InMemoryMetricsRegistry
 
 _PROVISIONER_PATH = Path(__file__).parents[1] / "scripts" / "provision_local_models.py"
 _PROVISIONER_SPEC = importlib.util.spec_from_file_location(
@@ -129,12 +130,16 @@ async def test_sqlite_worker_queue_claims_and_completes_job(tmp_path: Path) -> N
 async def test_local_http_model_adapters_use_private_contracts() -> None:
     """Embedding and generation adapters validate the local service payloads."""
 
+    saw_llm_timing_request = False
+
     async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal saw_llm_timing_request
         if request.url.path.endswith("/embeddings"):
             return httpx.Response(
                 200,
                 json={"data": [{"embedding": [1.0, 0.0]}, {"embedding": [0.0, 1.0]}]},
             )
+        saw_llm_timing_request = json.loads(request.content)["timings_per_token"]
         return httpx.Response(
             200,
             json={
@@ -144,7 +149,16 @@ async def test_local_http_model_adapters_use_private_contracts() -> None:
                             "content": '{"direct_answer":"grounded","supporting_evidence":["e"]}'
                         }
                     }
-                ]
+                ],
+                "usage": {"prompt_tokens": 40, "completion_tokens": 10},
+                "timings": {
+                    "prompt_n": 40,
+                    "prompt_ms": 20.0,
+                    "prompt_per_second": 2000.0,
+                    "predicted_n": 10,
+                    "predicted_ms": 50.0,
+                    "predicted_per_second": 200.0,
+                },
             },
         )
 
@@ -157,10 +171,12 @@ async def test_local_http_model_adapters_use_private_contracts() -> None:
     )
     assert await embedder.embed_texts(["one", "two"]) == [[1.0, 0.0], [0.0, 1.0]]
 
+    metrics_registry = InMemoryMetricsRegistry()
     generator = LlamaCppAnswerGenerator(
         base_url="http://llm:8082/v1",
         model="test-model",
         transport=transport,
+        metrics_registry=metrics_registry,
     )
     answer = await generator.generate(
         ResearchGenerationRequest(
@@ -170,6 +186,14 @@ async def test_local_http_model_adapters_use_private_contracts() -> None:
         )
     )
     assert answer.direct_answer == "grounded"
+    assert saw_llm_timing_request is True
+    llm_metrics = metrics_registry.snapshot()["llm_calls"][0]
+    assert llm_metrics["count"] == 1
+    assert llm_metrics["avg_prompt_ms"] == 20.0
+    assert llm_metrics["avg_generation_ms"] == 50.0
+    assert llm_metrics["avg_prompt_tokens"] == 40.0
+    assert llm_metrics["avg_completion_tokens_per_second"] == 200.0
+    assert llm_metrics["latest"]["trace_id"] == "trace"
 
 
 def test_model_provisioner_writes_verifiable_local_manifest(tmp_path: Path) -> None:

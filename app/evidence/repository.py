@@ -40,6 +40,7 @@ class EvidenceLedgerRepository:
             session.add(
                 AnalysisRunRecord(
                     analysis_run_id=analysis_run_id,
+                    project_id=response.project_id,
                     session_id=response.session_id,
                     trace_id=response.trace_id,
                     workflow_id=workflow_id,
@@ -111,11 +112,18 @@ class EvidenceLedgerRepository:
                     )
         return analysis_run_id
 
-    async def get_run_evidence(self, analysis_run_id: str) -> dict[str, object] | None:
+    async def get_run_evidence(
+        self, analysis_run_id: str, project_id: str = "sample-project"
+    ) -> dict[str, object] | None:
         """Return the persisted run, claims, and evidence links for audit views."""
 
         async with self._session_manager.session() as session:
-            run = await session.get(AnalysisRunRecord, analysis_run_id)
+            run = await session.scalar(
+                select(AnalysisRunRecord).where(
+                    AnalysisRunRecord.analysis_run_id == analysis_run_id,
+                    AnalysisRunRecord.project_id == project_id,
+                )
+            )
             if run is None:
                 return None
             claims = (

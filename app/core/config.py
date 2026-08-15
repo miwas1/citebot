@@ -201,6 +201,10 @@ class Settings(BaseSettings):
     )
     research_api_key: str | None = Field(default=None, alias="RESEARCH_API_KEY")
     admin_api_key: str | None = Field(default=None, alias="ADMIN_API_KEY")
+    api_key_auth_enabled: bool = Field(
+        default=False,
+        alias="API_KEY_AUTH_ENABLED",
+    )
     rate_limit_window_seconds: int = Field(
         default=60,
         alias="RATE_LIMIT_WINDOW_SECONDS",
@@ -561,7 +565,7 @@ class Settings(BaseSettings):
                 "EVALUATION_EVALUATOR_PROVIDER=gemini"
             )
             raise ValueError(msg)
-        if self.runtime_mode == "offline":
+        if self.runtime_mode == "offline" and self.app_env == "production":
             if self.embedding_provider in {"openai", "gemini"}:
                 msg = "Hosted embedding providers are disabled in offline production mode"
                 raise ValueError(msg)

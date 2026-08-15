@@ -9,6 +9,7 @@ x-citebot-environment: &citebot-environment
   STRUCTURED_DOCUMENT_PATH: /data/structured_documents
   SPARSE_INDEX_PATH: /data/sparse_index.sqlite3
   EMBEDDING_BASE_URL: http://embedding:8081
+  EMBEDDING_MODEL: ${EMBEDDING_SERVED_MODEL_NAME:-BAAI/bge-small-en-v1.5}
   LLM_BASE_URL: http://llm:8082/v1
   MODEL_MANIFEST_PATH: /models/manifest.lock.json
   OCR_MODEL_PATH: /models/paddleocr
@@ -62,6 +63,7 @@ services:
       APP_ENV: ${APP_ENV:-development}
       RESEARCH_API_KEY: ${RESEARCH_API_KEY:-}
       ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+      API_KEY_AUTH_ENABLED: ${API_KEY_AUTH_ENABLED:-false}
     ports:
       - "127.0.0.1:${CITEBOT_PORT:-8000}:8000"
     depends_on:
@@ -148,6 +150,8 @@ services:
     command:
       - --model-id
       - /models/bge-small-en-v1.5
+      - --served-model-name
+      - ${EMBEDDING_SERVED_MODEL_NAME:-BAAI/bge-small-en-v1.5}
       - --port
       - "8081"
       - --max-batch-tokens

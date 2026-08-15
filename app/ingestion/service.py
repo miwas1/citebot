@@ -13,6 +13,7 @@ from app.ingestion.normalizer import DocumentNormalizer
 from app.ingestion.object_store import LocalObjectStore
 from app.ingestion.repository import IngestionRepository
 from app.ingestion.schemas import (
+    DEFAULT_PROJECT_ID,
     DocumentSummary,
     DocumentVersionSummary,
     IngestionMetrics,
@@ -66,12 +67,14 @@ class IngestionService:
         force_reindex: bool = False,
         embedding_version: str = "bge-small-en-v1.5",
         index_version: str = "v2",
+        project_id: str = DEFAULT_PROJECT_ID,
     ) -> JobStatusResponse:
         """Ingest a file or directory and return the resulting job summary."""
 
         job_id = str(uuid4())
         await self._repository.create_job(
             job_id=job_id,
+            project_id=project_id,
             source_path=str(source_path),
             force_reindex=force_reindex,
             embedding_version=embedding_version,
@@ -82,6 +85,7 @@ class IngestionService:
         return await self._process_job(
             job_id=job_id,
             source_path=source_path,
+            project_id=project_id,
             force_reindex=force_reindex,
             embedding_version=embedding_version,
             index_version=index_version,
@@ -93,12 +97,14 @@ class IngestionService:
         force_reindex: bool = False,
         embedding_version: str | None = None,
         index_version: str = "v2",
+        project_id: str = DEFAULT_PROJECT_ID,
     ) -> JobStatusResponse:
         """Persist an ingestion request for the durable worker queue."""
 
         job_id = str(uuid4())
         await self._repository.create_job(
             job_id=job_id,
+            project_id=project_id,
             source_path=str(source_path),
             force_reindex=force_reindex,
             embedding_version=embedding_version or self._settings.embedding_version,
@@ -126,6 +132,7 @@ class IngestionService:
             force_reindex=job.force_reindex,
             embedding_version=job.embedding_version,
             index_version=job.index_version,
+            project_id=job.project_id,
             worker_id=worker_id,
         )
 
@@ -134,15 +141,19 @@ class IngestionService:
 
         return await self._repository.recover_stale_jobs()
 
-    async def list_documents(self, limit: int = 200) -> list[DocumentSummary]:
+    async def list_documents(
+        self, limit: int = 200, project_id: str = DEFAULT_PROJECT_ID
+    ) -> list[DocumentSummary]:
         """List documents available to the user workspace."""
 
-        return await self._repository.list_documents(limit)
+        return await self._repository.list_documents(limit=limit, project_id=project_id)
 
-    async def list_jobs(self, limit: int = 100) -> list[JobStatusResponse]:
+    async def list_jobs(
+        self, limit: int = 100, project_id: str = DEFAULT_PROJECT_ID
+    ) -> list[JobStatusResponse]:
         """List recent ingestion jobs for progress tracking."""
 
-        return await self._repository.list_jobs(limit)
+        return await self._repository.list_jobs(limit=limit, project_id=project_id)
 
     async def list_versions(self, logical_document_id: str) -> list[DocumentVersionSummary]:
         """Expose immutable document revisions to API and workflow callers."""
@@ -157,6 +168,7 @@ class IngestionService:
         embedding_version: str,
         index_version: str,
         worker_id: str | None = None,
+        project_id: str = DEFAULT_PROJECT_ID,
     ) -> JobStatusResponse:
         """Process a foreground or worker-claimed job using the same pipeline."""
 
@@ -174,9 +186,9 @@ class IngestionService:
                         worker_id,
                         self._settings.queue_lease_seconds,
                     )
-                document = self._normalizer.normalize(loaded_document)
+                document = self._normalizer.normalize(loaded_document, project_id)
                 existing_state = await self._repository.get_document_state(
-                    document.source_uri
+                    project_id, document.source_uri
                 )
                 if (
                     existing_state
@@ -251,11 +263,13 @@ class IngestionService:
         source_path: Path,
         embedding_version: str = "bge-small-en-v1.5",
         index_version: str = "v2",
+        project_id: str = DEFAULT_PROJECT_ID,
     ) -> JobStatusResponse:
         """Force a re-index of the given corpus source path."""
 
         return await self.ingest_path(
             source_path=source_path,
+            project_id=project_id,
             force_reindex=True,
             embedding_version=embedding_version,
             index_version=index_version,

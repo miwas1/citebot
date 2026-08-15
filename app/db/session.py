@@ -41,6 +41,15 @@ class DatabaseSessionManager:
         """Apply additive columns for installations created before structured data."""
 
         additions = {
+            "documents": {
+                "project_id": "VARCHAR(64)",
+            },
+            "research_sessions": {
+                "project_id": "VARCHAR(64)",
+            },
+            "analysis_runs": {
+                "project_id": "VARCHAR(64)",
+            },
             "chunks": {
                 "element_ids": "JSON",
                 "bbox_refs": "JSON",
@@ -56,6 +65,7 @@ class DatabaseSessionManager:
                 "source_anchor_ids": "JSON",
             },
             "ingestion_jobs": {
+                "project_id": "VARCHAR(64)",
                 "attempt_count": "INTEGER DEFAULT 0",
                 "max_attempts": "INTEGER DEFAULT 3",
                 "lease_owner": "VARCHAR(128)",

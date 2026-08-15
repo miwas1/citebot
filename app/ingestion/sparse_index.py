@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from app.ingestion.schemas import (
+    DEFAULT_PROJECT_ID,
     CanonicalDocument,
     ChunkPayload,
     RetrievalFilters,
@@ -85,13 +86,14 @@ class SparseIndex:
         with self._connect() as connection:
             self._create_schema(connection)
             connection.execute(
-                "UPDATE sparse_chunks SET is_current = 0 WHERE document_id = ?",
-                (document.document_id,),
+                "UPDATE sparse_chunks SET is_current = 0 WHERE project_id = ? AND document_id = ?",
+                (document.project_id, document.document_id),
             )
             for chunk in chunks:
                 value = {
                     "chunk_id": chunk.chunk_id,
                     "document_id": chunk.document_id,
+                    "project_id": document.project_id,
                     "title": chunk.title,
                     "source_uri": chunk.source_uri,
                     "location_marker": chunk.location_marker,
@@ -130,8 +132,9 @@ class SparseIndex:
         if not terms:
             return []
         match_query = " OR ".join(f'"{term}"' for term in terms)
-        conditions = ["sparse_chunks_fts MATCH ?"]
+        conditions = ["sparse_chunks_fts MATCH ?", "c.project_id = ?"]
         parameters: list[Any] = [match_query]
+        parameters.append(filters.project_id if filters else DEFAULT_PROJECT_ID)
         if filters is not None:
             self._add_filter(
                 conditions,
@@ -164,7 +167,7 @@ class SparseIndex:
         parameters.append(max(1, min(top_k, 50)))
         statement = f"""
             SELECT
-                c.chunk_id, c.document_id, c.title, c.source_uri,
+                c.chunk_id, c.document_id, c.project_id, c.title, c.source_uri,
                 c.location_marker, c.access_policy, c.embedding_version,
                 c.index_version, c.section, c.page, c.metadata_json,
                 c.text, c.element_ids_json, c.bbox_refs_json,
@@ -189,17 +192,18 @@ class SparseIndex:
         connection.execute(
             """
             INSERT OR REPLACE INTO sparse_chunks (
-                chunk_id, document_id, title, source_uri, location_marker,
+                chunk_id, document_id, project_id, title, source_uri, location_marker,
                 access_policy, embedding_version, index_version, section, page,
                 metadata_json, text, element_ids_json, bbox_refs_json,
                 extraction_method, min_confidence, parent_chunk_id, chunk_level,
                 heading_path_json, content_hash, version_id, is_current, ordinal,
                 source_anchor_ids_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 chunk_id,
                 str(value.get("document_id", "")),
+                str(value.get("project_id", DEFAULT_PROJECT_ID)),
                 str(value.get("title", "")),
                 str(value.get("source_uri", "")),
                 value.get("location_marker"),
@@ -257,6 +261,7 @@ class SparseIndex:
         return SearchResult(
             chunk_id=row["chunk_id"],
             document_id=row["document_id"],
+            project_id=(row["project_id"] if "project_id" in row.keys() else DEFAULT_PROJECT_ID),
             title=row["title"],
             source_uri=row["source_uri"],
             location_marker=row["location_marker"],
@@ -297,6 +302,7 @@ class SparseIndex:
             CREATE TABLE IF NOT EXISTS sparse_chunks (
                 chunk_id TEXT PRIMARY KEY,
                 document_id TEXT NOT NULL,
+                project_id TEXT NOT NULL DEFAULT 'sample-project',
                 title TEXT NOT NULL,
                 source_uri TEXT NOT NULL,
                 location_marker TEXT,
@@ -322,6 +328,8 @@ class SparseIndex:
             );
             CREATE INDEX IF NOT EXISTS sparse_chunks_document_idx
                 ON sparse_chunks(document_id);
+            CREATE INDEX IF NOT EXISTS sparse_chunks_project_idx
+                ON sparse_chunks(project_id);
             CREATE VIRTUAL TABLE IF NOT EXISTS sparse_chunks_fts
                 USING fts5(chunk_id UNINDEXED, title, text);
             """
@@ -338,10 +346,15 @@ class SparseIndex:
             "is_current": "INTEGER NOT NULL DEFAULT 1",
             "ordinal": "INTEGER NOT NULL DEFAULT 0",
             "source_anchor_ids_json": "TEXT NOT NULL DEFAULT '[]'",
+            "project_id": "TEXT NOT NULL DEFAULT 'sample-project'",
         }
         for name, definition in additions.items():
             if name not in existing:
                 connection.execute(f"ALTER TABLE sparse_chunks ADD COLUMN {name} {definition}")
+        connection.execute(
+            "UPDATE sparse_chunks SET project_id = ? WHERE project_id = ?",
+            ("imported-documents", "legacy-project"),
+        )
 
     @staticmethod
     def _add_filter(

@@ -17,6 +17,7 @@ from app.ingestion.schemas import (
 )
 
 router = APIRouter(prefix="/admin/ingestion")
+project_router = APIRouter(prefix="/projects")
 
 ContainerDependency = Annotated[ServiceContainer, Depends(get_container)]
 AdminAccessDependency = Annotated[None, Depends(require_admin_access)]
@@ -35,12 +36,14 @@ async def run_ingestion_job(
         response.status_code = status.HTTP_202_ACCEPTED
         return await container.ingestion_service.enqueue_path(
             source_path=Path(request.source_path),
+            project_id=request.project_id,
             force_reindex=request.force_reindex,
             embedding_version=request.embedding_version,
             index_version=request.index_version,
         )
     return await container.ingestion_service.ingest_path(
         source_path=Path(request.source_path),
+        project_id=request.project_id,
         force_reindex=request.force_reindex,
         embedding_version=request.embedding_version,
         index_version=request.index_version,
@@ -70,6 +73,22 @@ async def search_ingested_chunks(
     """Search indexed chunks through the configured dense, sparse, or hybrid retriever."""
 
     return await container.retrieval_service.search(request)
+
+
+@project_router.post("/{project_id}/search", response_model=list[SearchResult])
+async def search_project_chunks(
+    project_id: str,
+    request: SearchRequest,
+    container: ContainerDependency,
+    _: AdminAccessDependency,
+) -> list[SearchResult]:
+    """Search only indexed chunks owned by the selected project."""
+
+    await container.project_service.require(project_id)
+    scoped = request.model_copy(
+        update={"filters": request.filters.model_copy(update={"project_id": project_id})}
+    )
+    return await container.retrieval_service.search(scoped)
 
 
 @router.get("/metrics", response_model=IngestionMetrics)

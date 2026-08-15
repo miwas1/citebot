@@ -33,7 +33,7 @@ from app.core.config import Settings
 from app.evidence.repository import EvidenceLedgerRepository
 from app.evidence.schemas import AtomicClaim, EvidenceCandidate, VerificationDecision
 from app.evidence.service import EvidenceService
-from app.ingestion.schemas import SearchRequest, SearchResult
+from app.ingestion.schemas import RetrievalFilters, SearchRequest, SearchResult
 from app.retrieval.query_planner import decompose_query
 from app.retrieval.service import RetrievalService
 from app.tools.citation_verifier import CitationVerifier
@@ -106,7 +106,11 @@ class ResearchAgentService:
 
         session_id = request.session_id or create_session_id()
         trace_id = trace_id or create_trace_id()
-        stored_session = await self._session_store.get(session_id)
+        try:
+            stored_session = await self._session_store.get(session_id, request.project_id)
+        except TypeError:
+            # Compatibility with lightweight session adapters used by callers/tests.
+            stored_session = await self._session_store.get(session_id)
         initial_state: ResearchAgentState = {
             "session_id": session_id,
             "trace_id": trace_id,
@@ -123,6 +127,7 @@ class ResearchAgentService:
         if response is None:
             response = self._build_error_response(
                 session_id=session_id,
+                project_id=request.project_id,
                 trace_id=trace_id,
                 error_message=result.get("error", "Unknown research agent failure."),
                 memory=result.get("memory", ResearchMemory()),
@@ -301,6 +306,7 @@ class ResearchAgentService:
                         query=query,
                         top_k=plan.top_k,
                         strategy="hybrid",
+                        filters=RetrievalFilters(project_id=state["request"].project_id),
                         include_explain=True,
                     )
                 )
@@ -532,6 +538,7 @@ class ResearchAgentService:
         )
         response = ResearchResponse(
             session_id=state["session_id"],
+            project_id=state["request"].project_id,
             trace_id=state["trace_id"],
             answer=answer,
             verification=verification,
@@ -559,6 +566,7 @@ class ResearchAgentService:
         response = self._build_error_response(
             session_id=state["session_id"],
             trace_id=state["trace_id"],
+            project_id=state["request"].project_id,
             error_message=state.get("error", "Unhandled research agent error."),
             memory=state.get("memory", ResearchMemory()),
             state_transitions=_append_transition(state, "error_handler"),
@@ -646,6 +654,7 @@ class ResearchAgentService:
         await self._session_store.save(
             ResearchSessionRecord(
                 session_id=session_id,
+                project_id=response.project_id,
                 turns=session_turns,
                 memory=response.memory,
                 last_trace_id=response.trace_id,
@@ -660,11 +669,13 @@ class ResearchAgentService:
         memory: ResearchMemory,
         state_transitions: list[str],
         stage_timings_ms: dict[str, float] | None = None,
+        project_id: str = "sample-project",
     ) -> ResearchResponse:
         """Construct a controlled failure payload for API consumers."""
 
         return ResearchResponse(
             session_id=session_id,
+            project_id=project_id,
             trace_id=trace_id,
             answer=ResearchAnswer(
                 direct_answer=build_guarded_answer("the requested research question"),

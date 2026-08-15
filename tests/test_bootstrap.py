@@ -36,9 +36,11 @@ async def test_sample_corpus_bootstrap_is_idempotent(tmp_path: Path) -> None:
         def __init__(self, repository: Repository) -> None:
             self.repository = repository
             self.calls = 0
+            self.project_ids = []
 
         async def enqueue_path(self, source_path, **kwargs):
             self.calls += 1
+            self.project_ids.append(kwargs["project_id"])
             self.repository.scheduled = True
             return JobStatusResponse(
                 job_id="sample-job",
@@ -58,3 +60,4 @@ async def test_sample_corpus_bootstrap_is_idempotent(tmp_path: Path) -> None:
     assert first is not None
     assert second is None
     assert ingestion.calls == 1
+    assert ingestion.project_ids == ["sample-project"]

@@ -16,11 +16,12 @@
       <nav class="view-tabs" aria-label="Workspace">
         <button class="tab active" data-view="chat">Ask</button>
         <button class="tab" data-view="documents">Documents</button>
+        <button class="tab" data-view="projects">Projects</button>
         <a class="tab docs-link" href="/docs.html">Guide</a>
       </nav>
       <div class="top-actions">
+        <button id="projectSwitcher" class="project-switcher" type="button" aria-label="Switch project"><span class="project-switcher-name">Loading project…</span><span class="project-switcher-state">⌄</span></button>
         <span class="privacy"><i></i> Local workspace</span>
-        <button class="icon-button" id="settingsButton" aria-label="Connection settings">⚙</button>
       </div>
     </header>
 
@@ -33,9 +34,9 @@
 
       <section class="chat-panel">
         <div id="emptyChat" class="empty-chat">
-          <div class="eyebrow">Your private research desk</div>
+          <div class="eyebrow" id="chatEyebrow">Your private research desk</div>
           <h1>Ask your documents.<br><em>Check every source.</em></h1>
-          <p>CiteBot answers from your local library and shows the evidence behind each claim.</p>
+          <p id="chatDescription">CiteBot answers from this project's local library and shows the evidence behind each claim.</p>
           <div class="prompt-row">
             <button class="suggestion">Summarize the key findings across my documents</button>
             <button class="suggestion">Where do my sources disagree?</button>
@@ -46,7 +47,7 @@
         <form id="chatForm" class="composer">
           <textarea id="queryInput" rows="1" maxlength="2000" placeholder="Ask across your documents…" aria-label="Question"></textarea>
           <div class="composer-bottom">
-            <span id="libraryHint">Loading library…</span>
+            <span id="libraryHint">Loading project…</span>
             <button id="sendButton" type="submit" aria-label="Send question">↑</button>
           </div>
         </form>
@@ -61,7 +62,7 @@
 
     <main id="documentsView" class="workspace documents-view hidden">
       <section class="documents-heading">
-        <div><div class="eyebrow">Knowledge library</div><h1>Documents</h1><p>Upload, process, and keep track of the sources CiteBot can use.</p></div>
+        <div><div class="eyebrow">Knowledge library</div><h1 id="documentsTitle">Documents</h1><p>Upload, process, and keep track of the sources this project can use.</p></div>
         <button class="primary-button" id="uploadButton">＋ Add documents</button>
         <input id="fileInput" type="file" multiple hidden accept=".pdf,.docx,.txt,.md,.json,.jsonl,.png,.jpg,.jpeg,.tif,.tiff">
       </section>
@@ -79,17 +80,25 @@
         </div>
       </section>
     </main>
+
+    <main id="projectsView" class="workspace projects-view hidden">
+      <section class="projects-heading">
+        <div><div class="eyebrow">Reusable knowledge spaces</div><h1>Projects</h1><p>Keep each team's source set focused, reusable, and ready to query.</p></div>
+        <button class="primary-button" id="newProjectButton">＋ New project</button>
+      </section>
+      <section id="projectList" class="project-list" aria-live="polite"></section>
+    </main>
   </div>
 
-  <dialog id="settingsDialog">
-    <form method="dialog" class="settings-form">
-      <div class="dialog-heading"><div><div class="eyebrow">Connection</div><h2>Workspace access</h2></div><button value="cancel" aria-label="Close">×</button></div>
-      <p>Keys stay in this browser and are only sent to your local CiteBot server.</p>
-      <label>Research API key<input id="researchKey" type="password" autocomplete="off" placeholder="Optional in development"></label>
-      <label>Admin API key<input id="adminKey" type="password" autocomplete="off" placeholder="Optional in development"></label>
-      <button id="saveSettings" class="primary-button" value="default">Save settings</button>
+  <dialog id="newProjectDialog">
+    <form method="dialog" id="newProjectForm" class="settings-form">
+      <div class="dialog-heading"><div><div class="eyebrow">New workspace</div><h2>Create a project</h2></div><button value="cancel" aria-label="Close">×</button></div>
+      <label>Project name<input id="newProjectName" required maxlength="255" autocomplete="off" placeholder="e.g. Q3 vendor review"></label>
+      <label>Description <span class="optional">(optional)</span><textarea id="newProjectDescription" rows="3" maxlength="4000" placeholder="What belongs in this project?"></textarea></label>
+      <button id="createProjectButton" class="primary-button" value="default">Create project</button>
     </form>
   </dialog>
+
   <div id="toastRegion" class="toast-region" aria-live="polite"></div>
   <script src="/app.js" defer></script>
 </body>

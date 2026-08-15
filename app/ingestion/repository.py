@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 
 from sqlalchemy import func, select, update
@@ -17,6 +18,7 @@ from app.db.models import (
 from app.db.session import DatabaseSessionManager
 from app.ingestion.provenance import anchor_id, text_hash
 from app.ingestion.schemas import (
+    DEFAULT_PROJECT_ID,
     CanonicalDocument,
     ChunkPayload,
     DocumentState,
@@ -42,6 +44,7 @@ class IngestionRepository:
         force_reindex: bool,
         embedding_version: str,
         index_version: str,
+        project_id: str = DEFAULT_PROJECT_ID,
         status: str = "running",
         max_attempts: int = 3,
     ) -> None:
@@ -51,6 +54,7 @@ class IngestionRepository:
             session.add(
                 IngestionJobRecord(
                     job_id=job_id,
+                    project_id=project_id,
                     source_path=source_path,
                     status=status,
                     force_reindex=force_reindex,
@@ -219,7 +223,9 @@ class IngestionRepository:
                 return None
             return self._to_job_response(record)
 
-    async def has_active_or_completed_job(self, source_path: str) -> bool:
+    async def has_active_or_completed_job(
+        self, source_path: str, project_id: str = DEFAULT_PROJECT_ID
+    ) -> bool:
         """Check whether a bootstrap source already has durable ingestion work."""
 
         source_paths = {source_path, str(Path(source_path).resolve())}
@@ -229,17 +235,27 @@ class IngestionRepository:
                 .select_from(IngestionJobRecord)
                 .where(
                     IngestionJobRecord.source_path.in_(source_paths),
+                    IngestionJobRecord.project_id == project_id,
                     IngestionJobRecord.status.in_(["queued", "running", "completed"]),
                 )
             )
         return bool(count)
 
-    async def get_document_state(self, source_uri: str) -> DocumentState | None:
+    async def get_document_state(
+        self, project_id: str, source_uri: str | None = None
+    ) -> DocumentState | None:
         """Return the stored document hash for the given source URI."""
+
+        if source_uri is None:
+            source_uri = project_id
+            project_id = DEFAULT_PROJECT_ID
 
         async with self._session_manager.session() as session:
             result = await session.execute(
-                select(DocumentRecord).where(DocumentRecord.source_uri == source_uri)
+                select(DocumentRecord).where(
+                    DocumentRecord.project_id == project_id,
+                    DocumentRecord.source_uri == source_uri,
+                )
             )
             record = result.scalar_one_or_none()
             if record is None:
@@ -263,6 +279,7 @@ class IngestionRepository:
             if record is None:
                 record = DocumentRecord(
                     document_id=document.document_id,
+                    project_id=document.project_id,
                     source_uri=document.source_uri,
                     title=document.title,
                     publisher=document.publisher,
@@ -276,6 +293,7 @@ class IngestionRepository:
                 session.add(record)
             else:
                 record.source_uri = document.source_uri
+                record.project_id = document.project_id
                 record.title = document.title
                 record.publisher = document.publisher
                 record.published_at = document.published_at
@@ -343,7 +361,9 @@ class IngestionRepository:
     ) -> None:
         """Persist an immutable content version and deterministic source anchors."""
 
-        version_id = document.content_hash
+        version_id = sha256(
+            f"{document.project_id}:{document.content_hash}".encode()
+        ).hexdigest()
         logical_document_id = document.document_id
         async with self._session_manager.session() as session:
             existing = await session.get(DocumentVersionRecord, version_id)
@@ -414,7 +434,9 @@ class IngestionRepository:
             .limit(1)
         )
 
-    async def list_documents(self, limit: int = 200) -> list[DocumentSummary]:
+    async def list_documents(
+        self, limit: int = 200, project_id: str = DEFAULT_PROJECT_ID
+    ) -> list[DocumentSummary]:
         """Return recently ingested documents for the user-facing library."""
 
         async with self._session_manager.session() as session:
@@ -422,6 +444,7 @@ class IngestionRepository:
                 await session.execute(
                     select(DocumentRecord, func.count(ChunkRecord.chunk_id))
                     .outerjoin(ChunkRecord)
+                    .where(DocumentRecord.project_id == project_id)
                     .group_by(DocumentRecord.document_id)
                     .order_by(DocumentRecord.ingested_at.desc())
                     .limit(limit)
@@ -430,6 +453,7 @@ class IngestionRepository:
         return [
             DocumentSummary(
                 document_id=document.document_id,
+                project_id=document.project_id,
                 title=document.title,
                 source_uri=document.source_uri,
                 content_hash=document.content_hash,
@@ -482,13 +506,16 @@ class IngestionRepository:
             for record in records
         ]
 
-    async def list_jobs(self, limit: int = 100) -> list[JobStatusResponse]:
+    async def list_jobs(
+        self, limit: int = 100, project_id: str = DEFAULT_PROJECT_ID
+    ) -> list[JobStatusResponse]:
         """Return recent ingestion work for upload progress tracking."""
 
         async with self._session_manager.session() as session:
             records = (
                 await session.scalars(
                     select(IngestionJobRecord)
+                    .where(IngestionJobRecord.project_id == project_id)
                     .order_by(IngestionJobRecord.started_at.desc())
                     .limit(limit)
                 )
@@ -500,6 +527,7 @@ class IngestionRepository:
 
         return JobStatusResponse(
             job_id=record.job_id,
+            project_id=record.project_id or DEFAULT_PROJECT_ID,
             source_path=record.source_path,
             status=record.status,
             force_reindex=record.force_reindex,

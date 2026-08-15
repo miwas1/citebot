@@ -82,6 +82,7 @@ def test_research_query_requires_api_key_when_configured(
     """Research routes should enforce the configured research API key."""
 
     monkeypatch.setenv("RESEARCH_API_KEY", "research-secret")
+    monkeypatch.setenv("API_KEY_AUTH_ENABLED", "true")
     get_settings.cache_clear()
 
     with TestClient(create_app()) as client:
@@ -97,6 +98,23 @@ def test_research_query_requires_api_key_when_configured(
 
     assert unauthorized.status_code == 401
     assert authorized.status_code == 200
+
+
+def test_configured_api_keys_are_not_enforced_when_auth_is_disabled(
+    configured_environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured secrets should not require browser headers during testing."""
+
+    monkeypatch.setenv("RESEARCH_API_KEY", "research-secret")
+    monkeypatch.setenv("ADMIN_API_KEY", "admin-secret")
+    monkeypatch.setenv("API_KEY_AUTH_ENABLED", "false")
+    get_settings.cache_clear()
+
+    with TestClient(create_app()) as client:
+        response = client.get("/api/v1/documents")
+
+    assert response.status_code == 200
 
 
 def test_research_query_rate_limit_is_enforced(
@@ -162,6 +180,7 @@ def test_metrics_endpoint_requires_admin_key_and_reports_requests(
     """The metrics endpoint should require admin auth and expose request metrics."""
 
     monkeypatch.setenv("ADMIN_API_KEY", "admin-secret")
+    monkeypatch.setenv("API_KEY_AUTH_ENABLED", "true")
     get_settings.cache_clear()
 
     with TestClient(create_app()) as client:

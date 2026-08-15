@@ -7,23 +7,28 @@ import re
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid5
 
-from app.ingestion.schemas import CanonicalDocument, LoadedDocument
+from app.ingestion.schemas import DEFAULT_PROJECT_ID, CanonicalDocument, LoadedDocument
 
 
 class DocumentNormalizer:
     """Normalize raw documents into canonical ingestion-ready records."""
 
-    def normalize(self, document: LoadedDocument) -> CanonicalDocument:
+    def normalize(
+        self, document: LoadedDocument, project_id: str = DEFAULT_PROJECT_ID
+    ) -> CanonicalDocument:
         """Clean the text payload and compute a stable content hash and document identifier."""
 
         normalized_text = self._normalize_text(document.text)
         content_hash = hashlib.sha256(normalized_text.encode("utf-8")).hexdigest()
         structured = self._align_structured(document.structured, normalized_text)
         if structured is not None:
-            structured.document_id = str(uuid5(NAMESPACE_URL, document.source_uri))
+            structured.document_id = str(
+                uuid5(NAMESPACE_URL, f"{project_id}:{document.source_uri}")
+            )
             structured.source_content_hash = content_hash
         return CanonicalDocument(
-            document_id=str(uuid5(NAMESPACE_URL, document.source_uri)),
+            document_id=str(uuid5(NAMESPACE_URL, f"{project_id}:{document.source_uri}")),
+            project_id=project_id,
             source_uri=document.source_uri,
             title=document.title.strip() or document.source_uri,
             text=normalized_text,

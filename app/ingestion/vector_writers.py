@@ -155,12 +155,24 @@ class QdrantWriter:
                         f"Qdrant collection {self._collection_name} has dimension "
                         f"{configured_size}, expected {vector_size}; use a new version"
                     )
+                await self._ensure_project_payload_index(client)
                 return
             create_response = await client.put(
                 f"{self._base_url}/collections/{self._collection_name}",
                 json={"vectors": {"size": vector_size, "distance": "Cosine"}},
             )
             create_response.raise_for_status()
+            await self._ensure_project_payload_index(client)
+
+    async def _ensure_project_payload_index(self, client: httpx.AsyncClient) -> None:
+        """Create an exact-match payload index for project isolation."""
+
+        response = await client.put(
+            f"{self._base_url}/collections/{self._collection_name}/index",
+            json={"field_name": "project_id", "field_schema": "keyword"},
+        )
+        if response.status_code not in {200, 201, 202, 400, 409}:
+            response.raise_for_status()
 
     async def upsert_chunks(
         self,
@@ -182,6 +194,7 @@ class QdrantWriter:
                     "vector": list(embedding),
                     "payload": {
                         "document_id": chunk.document_id,
+                        "project_id": document.project_id,
                         "source_uri": document.source_uri,
                         "title": document.title,
                         "location_marker": chunk.location_marker,

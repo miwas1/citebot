@@ -27,13 +27,14 @@ def _extract_api_key(
 
 
 def _validate_api_key(
+    auth_enabled: bool,
     expected_key: str | None,
     provided_key: str | None,
     scope_name: str,
 ) -> None:
-    """Enforce API key authentication when the scope is configured with a key."""
+    """Enforce API key authentication only when explicitly enabled."""
 
-    if not expected_key:
+    if not auth_enabled or not expected_key:
         return
     if provided_key and secrets.compare_digest(provided_key, expected_key):
         return
@@ -57,6 +58,7 @@ async def require_research_access(
 
     settings = get_runtime_settings()
     _validate_api_key(
+        settings.api_key_auth_enabled,
         settings.research_api_key,
         _extract_api_key(authorization, x_api_key),
         "research",
@@ -71,6 +73,7 @@ async def require_admin_access(
 
     settings = get_runtime_settings()
     _validate_api_key(
+        settings.api_key_auth_enabled,
         settings.admin_api_key,
         _extract_api_key(authorization, x_api_key),
         "admin",

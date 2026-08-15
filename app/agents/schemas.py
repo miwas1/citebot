@@ -8,6 +8,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+DEFAULT_PROJECT_ID = "sample-project"
+
 
 class ConversationTurn(BaseModel):
     """One persisted user or assistant turn in a research session."""
@@ -144,6 +146,7 @@ class ResearchQueryRequest(BaseModel):
     """Request body for the research query API."""
 
     session_id: str | None = None
+    project_id: str = DEFAULT_PROJECT_ID
     query: str = Field(min_length=1, max_length=2000)
     top_k: int = Field(default=5, ge=1, le=20)
     allow_web_search: bool | None = None
@@ -158,6 +161,7 @@ class ResearchResponse(BaseModel):
     """Response body for one research agent execution."""
 
     session_id: str
+    project_id: str = DEFAULT_PROJECT_ID
     trace_id: str
     answer: ResearchAnswer
     verification: CitationVerificationResult
@@ -178,6 +182,7 @@ class ResearchSessionRecord(BaseModel):
     """Persisted session data used to replay and continue prior conversations."""
 
     session_id: str
+    project_id: str = DEFAULT_PROJECT_ID
     turns: list[ConversationTurn] = Field(default_factory=list)
     memory: ResearchMemory = Field(default_factory=ResearchMemory)
     last_trace_id: str | None = None
@@ -187,6 +192,7 @@ class ConversationSummary(BaseModel):
     """Compact conversation entry for the chat sidebar."""
 
     session_id: str
+    project_id: str = DEFAULT_PROJECT_ID
     title: str
     updated_at: datetime
     turn_count: int

@@ -19,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ingest_parser = subparsers.add_parser("ingest", help="Ingest a corpus path.")
     ingest_parser.add_argument("source_path", type=Path)
+    ingest_parser.add_argument("--project-id", default="sample-project")
     ingest_parser.add_argument("--embedding-version", default="bge-small-en-v1.5")
     ingest_parser.add_argument("--index-version", default="v2")
 
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
         "reindex", help="Force re-index a corpus path."
     )
     reindex_parser.add_argument("source_path", type=Path)
+    reindex_parser.add_argument("--project-id", default="sample-project")
     reindex_parser.add_argument("--embedding-version", default="bge-small-en-v1.5")
     reindex_parser.add_argument("--index-version", default="v2")
 
@@ -33,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
         "search", help="Search dense, sparse, or hybrid retrieval indexes."
     )
     search_parser.add_argument("query")
+    search_parser.add_argument("--project-id", default="sample-project")
     search_parser.add_argument("--top-k", type=int, default=5)
     search_parser.add_argument(
         "--strategy",
@@ -65,6 +68,7 @@ async def run_cli() -> int:
         if args.command == "ingest":
             result = await container.ingestion_service.ingest_path(
                 source_path=args.source_path,
+                project_id=args.project_id,
                 embedding_version=args.embedding_version,
                 index_version=args.index_version,
             )
@@ -72,6 +76,7 @@ async def run_cli() -> int:
         elif args.command == "reindex":
             result = await container.ingestion_service.reindex_path(
                 source_path=args.source_path,
+                project_id=args.project_id,
                 embedding_version=args.embedding_version,
                 index_version=args.index_version,
             )
@@ -83,6 +88,7 @@ async def run_cli() -> int:
                 strategy=args.strategy,
                 index_target=args.index_target,
                 filters=RetrievalFilters(
+                    project_id=args.project_id,
                     document_ids=list(args.document_id),
                     source_uris=list(args.source_uri),
                     access_policies=list(args.access_policy),

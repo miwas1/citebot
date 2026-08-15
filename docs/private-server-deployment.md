@@ -17,8 +17,9 @@ The default Compose profile targets a CPU-only machine with at least:
 
 Use encrypted disks when documents are confidential. Keep the server patched,
 enable automatic security updates, and restrict SSH to keys and trusted source
-networks. CiteBot is designed for a single trusted workspace; it does not yet
-provide per-user accounts or workspace-level document isolation.
+networks. CiteBot is designed for a single trusted deployment; projects provide
+document and query isolation, but the application does not yet provide
+per-user accounts or project-level permissions.
 
 ## 2. Install and configure
 
@@ -81,11 +82,12 @@ docker compose ps
 docker compose logs --tail=100 api document-worker
 ```
 
-The first offline startup automatically queues the bundled sample corpus at
-`/app/data/sample_corpus`. Open the workspace while `document-worker` processes
-it; the sample documents will appear in the Documents view and can be queried
-as soon as their status becomes **Ready**. The bootstrap is idempotent and can
-be disabled with `SAMPLE_CORPUS_AUTO_INGEST=false`.
+The first offline startup automatically creates the **Sample Project** and
+queues the bundled corpus at `/app/data/sample_corpus`. Open the workspace
+while `document-worker` processes it; the project becomes **Ready to query**
+when indexing completes. The bootstrap is idempotent. Set
+`SAMPLE_CORPUS_AUTO_INGEST=false` only when intentionally starting without the
+bundled sample data.
 
 The API is reachable internally at `http://127.0.0.1:8000`. Caddy publishes
 CiteBot on port 80 and Dozzle at `/dozzle/` on the same listener, with port 8888

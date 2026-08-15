@@ -1,4 +1,4 @@
-"""ORM models for documents, evidence, workflows, and research sessions."""
+"""ORM models for projects, documents, evidence, workflows, and sessions."""
 
 from __future__ import annotations
 
@@ -16,13 +16,40 @@ def utc_now() -> datetime:
     return datetime.now(tz=UTC)
 
 
+class ProjectRecord(Base):
+    """A reusable, queryable document workspace."""
+
+    __tablename__ = "projects"
+    __table_args__ = (
+        Index("ix_projects_status_updated", "status", "updated_at"),
+    )
+
+    project_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    is_sample: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
+    )
+
+
 class DocumentRecord(Base):
     """Persisted source document metadata."""
 
     __tablename__ = "documents"
 
     document_id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    source_uri: Mapped[str] = mapped_column(String(1024), unique=True, index=True)
+    __table_args__ = (
+        Index("ix_documents_project_source", "project_id", "source_uri", unique=True),
+    )
+
+    source_uri: Mapped[str] = mapped_column(String(1024), index=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.project_id", ondelete="RESTRICT"), index=True
+    )
     title: Mapped[str] = mapped_column(String(512))
     publisher: Mapped[str | None] = mapped_column(String(255), nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(
@@ -85,6 +112,9 @@ class IngestionJobRecord(Base):
     __tablename__ = "ingestion_jobs"
 
     job_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.project_id", ondelete="RESTRICT"), index=True
+    )
     source_path: Mapped[str] = mapped_column(String(1024))
     status: Mapped[str] = mapped_column(String(32), index=True)
     force_reindex: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -121,6 +151,9 @@ class ResearchSessionRecordModel(Base):
     __tablename__ = "research_sessions"
 
     session_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.project_id", ondelete="RESTRICT"), index=True
+    )
     turns_json: Mapped[list[dict[str, object]]] = mapped_column(JSON, default=list)
     memory_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     last_trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -196,6 +229,9 @@ class AnalysisRunRecord(Base):
     __tablename__ = "analysis_runs"
 
     analysis_run_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.project_id", ondelete="RESTRICT"), index=True
+    )
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     trace_id: Mapped[str] = mapped_column(String(64), index=True)
     workflow_id: Mapped[str] = mapped_column(String(128), default="research")

@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+DEFAULT_PROJECT_ID = "sample-project"
+
 
 class LoadedDocument(BaseModel):
     """Raw document content loaded from the corpus source."""
@@ -95,6 +97,7 @@ class CanonicalDocument(BaseModel):
     """Normalized document ready for persistence and chunking."""
 
     document_id: str
+    project_id: str = DEFAULT_PROJECT_ID
     source_uri: str
     title: str
     text: str
@@ -150,6 +153,7 @@ class IngestionRequest(BaseModel):
     """Request body for running a local or admin ingestion job."""
 
     source_path: str = Field(min_length=1, max_length=4096)
+    project_id: str = DEFAULT_PROJECT_ID
     force_reindex: bool = False
     embedding_version: str = "bge-small-en-v1.5"
     index_version: str = "v2"
@@ -159,6 +163,7 @@ class JobStatusResponse(BaseModel):
     """External representation of ingestion job status and progress."""
 
     job_id: str
+    project_id: str = DEFAULT_PROJECT_ID
     source_path: str
     status: str
     force_reindex: bool
@@ -195,6 +200,7 @@ class RetrievalFilters(BaseModel):
     """Metadata filters applied consistently across retrieval backends."""
 
     document_ids: list[str] = Field(default_factory=list)
+    project_id: str = DEFAULT_PROJECT_ID
     source_uris: list[str] = Field(default_factory=list)
     access_policies: list[str] = Field(default_factory=list)
     embedding_version: str | None = None
@@ -209,6 +215,7 @@ class SearchResult(BaseModel):
 
     chunk_id: str
     document_id: str
+    project_id: str = DEFAULT_PROJECT_ID
     title: str
     source_uri: str
     location_marker: str | None = None
@@ -246,6 +253,7 @@ class DocumentSummary(BaseModel):
     """Document metadata presented by the end-user library."""
 
     document_id: str
+    project_id: str = DEFAULT_PROJECT_ID
     title: str
     source_uri: str
     content_hash: str

@@ -146,6 +146,7 @@ class PgVectorDenseRetriever:
                         SELECT
                             ce.chunk_id,
                             ce.document_id,
+                            d.project_id,
                             ce.embedding::text AS embedding,
                             ce.embedding_version,
                             ce.index_version,
@@ -603,6 +604,7 @@ def _build_result(
     return SearchResult(
         chunk_id=chunk.chunk_id,
         document_id=chunk.document_id,
+        project_id=chunk.project_id,
         title=chunk.title,
         source_uri=chunk.source_uri,
         location_marker=chunk.location_marker,
@@ -653,6 +655,7 @@ def _row_to_chunk(row: dict[str, Any]) -> IndexedChunkRecord:
     return IndexedChunkRecord(
         chunk_id=row["chunk_id"],
         document_id=row["document_id"],
+        project_id=row.get("project_id", "sample-project"),
         title=row["title"],
         source_uri=row["source_uri"],
         location_marker=row.get("location_marker"),
@@ -685,6 +688,7 @@ def _point_to_chunk(point: dict[str, Any]) -> IndexedChunkRecord:
     return IndexedChunkRecord(
         chunk_id=str(point["id"]),
         document_id=payload["document_id"],
+        project_id=payload.get("project_id", "sample-project"),
         title=payload.get("title", ""),
         source_uri=payload.get("source_uri", ""),
         location_marker=payload.get("location_marker"),
@@ -751,6 +755,8 @@ def _matches_filters(
 
     if filters.document_ids and chunk.document_id not in filters.document_ids:
         return False
+    if filters.project_id and chunk.project_id != filters.project_id:
+        return False
     if filters.source_uris and chunk.source_uri not in filters.source_uris:
         return False
     if filters.access_policies and chunk.access_policy not in filters.access_policies:
@@ -777,7 +783,9 @@ def _matches_filters(
 def _qdrant_filter(filters: RetrievalFilters) -> dict[str, object]:
     """Translate shared retrieval policy into Qdrant payload predicates."""
 
-    must: list[dict[str, object]] = []
+    must: list[dict[str, object]] = [
+        {"key": "project_id", "match": {"value": filters.project_id}}
+    ]
     for key, values in (
         ("document_id", filters.document_ids),
         ("source_uri", filters.source_uris),

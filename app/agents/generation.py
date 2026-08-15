@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from abc import ABC, abstractmethod
+from time import monotonic
 
 import httpx
 
@@ -16,6 +18,9 @@ from app.agents.schemas import (
     ResearchGenerationRequest,
 )
 from app.core.config import Settings
+from app.observability.metrics import InMemoryMetricsRegistry, LlmCallMetrics
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAnswerGenerator(ABC):
@@ -45,12 +50,14 @@ class LlamaCppAnswerGenerator(BaseAnswerGenerator):
         timeout_seconds: float = 60.0,
         concurrency: int = 1,
         transport: httpx.AsyncBaseTransport | None = None,
+        metrics_registry: InMemoryMetricsRegistry | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._timeout_seconds = timeout_seconds
         self._semaphore = asyncio.Semaphore(concurrency)
         self._transport = transport
+        self._metrics_registry = metrics_registry
 
     async def generate(self, request: ResearchGenerationRequest) -> ResearchAnswer:
         """Generate one answer while enforcing the local model concurrency budget."""
@@ -67,19 +74,91 @@ class LlamaCppAnswerGenerator(BaseAnswerGenerator):
             ],
             "temperature": 0.2,
             "response_format": {"type": "json_object"},
+            "timings_per_token": True,
         }
+        started = monotonic()
+        queue_wait_ms = 0.0
+        http_ms = 0.0
+        http_started: float | None = None
         try:
             async with self._semaphore:
+                queue_wait_ms = (monotonic() - started) * 1000
+                http_started = monotonic()
                 async with httpx.AsyncClient(
                     timeout=self._timeout_seconds,
                     transport=self._transport,
                 ) as client:
                     response = await client.post(endpoint, json=payload)
                     response.raise_for_status()
+                http_ms = (monotonic() - http_started) * 1000
         except httpx.HTTPError as error:
+            if http_started is not None:
+                http_ms = (monotonic() - http_started) * 1000
+            self._record_call(
+                request=request,
+                status="error",
+                started=started,
+                queue_wait_ms=queue_wait_ms,
+                http_ms=http_ms,
+            )
             raise RuntimeError(f"Local answer service unavailable: {error}") from error
-        output_text = _extract_chat_completion_text(response.json())
+        response_payload = response.json()
+        self._record_call(
+            request=request,
+            status="ok",
+            started=started,
+            queue_wait_ms=queue_wait_ms,
+            http_ms=http_ms,
+            response_payload=response_payload,
+        )
+        output_text = _extract_chat_completion_text(response_payload)
         return _parse_answer_json(output_text, request.contexts, request.query)
+
+    def _record_call(
+        self,
+        request: ResearchGenerationRequest,
+        status: str,
+        started: float,
+        queue_wait_ms: float,
+        http_ms: float,
+        response_payload: dict[str, object] | None = None,
+    ) -> None:
+        """Record one trace-linked model call without storing prompt content."""
+
+        timing = _llama_cpp_timing(response_payload or {}, http_ms=http_ms)
+        total_ms = (monotonic() - started) * 1000
+        metrics = LlmCallMetrics(
+            provider="llama-cpp",
+            model=self._model,
+            trace_id=request.trace_id,
+            status=status,
+            total_ms=total_ms,
+            queue_wait_ms=queue_wait_ms,
+            http_ms=http_ms,
+            **timing,
+        )
+        if self._metrics_registry is not None:
+            self._metrics_registry.record_llm_call(metrics)
+        logger.info(
+            "event=llm_call_completed provider=%s model=%s status=%s trace_id=%s "
+            "total_ms=%.2f queue_wait_ms=%.2f http_ms=%.2f prompt_ms=%s "
+            "generation_ms=%s overhead_ms=%s prompt_tokens=%s completion_tokens=%s "
+            "prompt_tokens_per_second=%s completion_tokens_per_second=%s",
+            metrics.provider,
+            metrics.model,
+            metrics.status,
+            metrics.trace_id,
+            metrics.total_ms,
+            metrics.queue_wait_ms,
+            metrics.http_ms,
+            metrics.prompt_ms,
+            metrics.generation_ms,
+            metrics.overhead_ms,
+            metrics.prompt_tokens,
+            metrics.completion_tokens,
+            metrics.prompt_tokens_per_second,
+            metrics.completion_tokens_per_second,
+        )
 
 
 class OpenAIAnswerGenerator(BaseAnswerGenerator):
@@ -159,7 +238,10 @@ class GeminiAnswerGenerator(BaseAnswerGenerator):
         return _parse_answer_json(output_text, request.contexts, request.query)
 
 
-def build_answer_generator(settings: Settings) -> BaseAnswerGenerator:
+def build_answer_generator(
+    settings: Settings,
+    metrics_registry: InMemoryMetricsRegistry | None = None,
+) -> BaseAnswerGenerator:
     """Build the configured answer generator with safe local fallback behavior."""
 
     if settings.answer_provider == "llama-cpp":
@@ -168,6 +250,7 @@ def build_answer_generator(settings: Settings) -> BaseAnswerGenerator:
             model=settings.answer_model,
             timeout_seconds=settings.llm_timeout_seconds,
             concurrency=settings.llm_generation_concurrency,
+            metrics_registry=metrics_registry,
         )
     if settings.answer_provider in {"local", "test"}:
         return LocalAnswerGenerator()
@@ -190,6 +273,52 @@ def build_answer_generator(settings: Settings) -> BaseAnswerGenerator:
         )
     msg = "ANSWER_PROVIDER must be one of llama-cpp, local, test, openai, or gemini"
     raise ValueError(msg)
+
+
+def _llama_cpp_timing(
+    payload: dict[str, object],
+    http_ms: float,
+) -> dict[str, object]:
+    """Normalize llama.cpp timing and OpenAI-compatible usage fields."""
+
+    raw_timings = payload.get("timings")
+    timings = raw_timings if isinstance(raw_timings, dict) else {}
+    raw_usage = payload.get("usage")
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
+    prompt_ms = _number(timings.get("prompt_ms"))
+    generation_ms = _number(timings.get("predicted_ms"))
+    has_server_timing = prompt_ms is not None or generation_ms is not None
+    measured_ms = sum(value for value in (prompt_ms, generation_ms) if value is not None)
+    return {
+        "prompt_ms": prompt_ms,
+        "generation_ms": generation_ms,
+        "overhead_ms": max(0.0, http_ms - measured_ms) if has_server_timing else None,
+        "prompt_tokens": _integer(
+            timings.get("prompt_n"), usage.get("prompt_tokens")
+        ),
+        "completion_tokens": _integer(
+            timings.get("predicted_n"), usage.get("completion_tokens")
+        ),
+        "prompt_tokens_per_second": _number(timings.get("prompt_per_second")),
+        "completion_tokens_per_second": _number(
+            timings.get("predicted_per_second")
+        ),
+    }
+
+
+def _number(value: object) -> float | None:
+    """Return a finite-looking numeric response value as a float."""
+
+    return float(value) if isinstance(value, int | float) else None
+
+
+def _integer(*values: object) -> int | None:
+    """Return the first integer-like response value."""
+
+    for value in values:
+        if isinstance(value, int):
+            return value
+    return None
 
 
 def _extract_chat_completion_text(payload: dict[str, object]) -> str:

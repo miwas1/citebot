@@ -44,6 +44,7 @@ def clear_settings_cache(
     monkeypatch.setenv("GEMINI_API_KEY", "")
     monkeypatch.setenv("RESEARCH_API_KEY", "")
     monkeypatch.setenv("ADMIN_API_KEY", "")
+    monkeypatch.setenv("API_KEY_AUTH_ENABLED", "false")
     monkeypatch.setenv("TAVILY_API_KEY", "")
     monkeypatch.setenv("ALLOW_WEB_SEARCH_DEFAULT", "false")
     monkeypatch.setenv("EVALUATION_EVALUATOR_PROVIDER", "openai")
