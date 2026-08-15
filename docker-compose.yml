@@ -231,7 +231,7 @@ services:
       timeout: 5s
       retries: 10
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
       - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro
     networks:
       - citebot_internal
